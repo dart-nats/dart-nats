@@ -569,5 +569,96 @@ SUACSSL3UAHUDXKFSNVUZRF5UHPMWZ6BFDTJ7M6USDXIEDNPPQYYYCU3VY
       await service.stop();
       await client.close();
     });
+
+    test('Service discovery: fan-in PING collects every running instance',
+        () async {
+      final client = Client();
+      await client.connect(Uri.parse('nats://localhost:4222'), retry: false);
+
+      final instance1 = Client();
+      await instance1.connect(Uri.parse('nats://localhost:4222'),
+          retry: false);
+      final instance2 = Client();
+      await instance2.connect(Uri.parse('nats://localhost:4222'),
+          retry: false);
+
+      final service1 = await instance1.addService(ServiceConfig(
+        name: 'discovery-fanout-service',
+        version: '1.0.0',
+      ));
+      final service2 = await instance2.addService(ServiceConfig(
+        name: 'discovery-fanout-service',
+        version: '1.0.0',
+      ));
+
+      // Bare $SRV.PING should be answered by both running instances.
+      final replies = await client.discoverServices(
+        timeout: const Duration(milliseconds: 800),
+      );
+      final ours =
+          replies.where((r) => r.name == 'discovery-fanout-service').toList();
+
+      expect(ours.length, equals(2));
+      expect(ours.map((r) => r.id).toSet().length, equals(2));
+      expect(ours.every((r) => r.version == '1.0.0'), isTrue);
+
+      // A name that nothing is registered under should collect nothing,
+      // and still resolve once the collection window elapses.
+      final none = await client.discoverServices(
+        name: 'no-such-service',
+        timeout: const Duration(milliseconds: 300),
+      );
+      expect(none, isEmpty);
+
+      await service1.stop();
+      await service2.stop();
+      await instance1.close();
+      await instance2.close();
+      await client.close();
+    });
+
+    test('Service discovery: targeted INFO and STATS for a named service',
+        () async {
+      final client = Client();
+      await client.connect(Uri.parse('nats://localhost:4222'), retry: false);
+
+      final service = await client.addService(ServiceConfig(
+        name: 'discovery-detail-service',
+        version: '2.1.0',
+        description: 'Discovery detail test service',
+        endpoints: [
+          Endpoint(
+            name: 'echo',
+            subject: 'discovery.echo',
+            handler: (msg) {
+              msg.respondString('echo-response');
+            },
+          ),
+        ],
+      ));
+
+      // Drive one request through the endpoint so STATS has something to report.
+      await client.requestString('discovery.echo', 'ping');
+
+      final infoReplies =
+          await client.getServicesInfo(name: 'discovery-detail-service');
+      expect(infoReplies.length, equals(1));
+      expect(infoReplies.single.description,
+          equals('Discovery detail test service'));
+      expect(infoReplies.single.endpoints.single.name, equals('echo'));
+      expect(
+          infoReplies.single.endpoints.single.subject, equals('discovery.echo'));
+
+      final statsReplies =
+          await client.getServicesStats(name: 'discovery-detail-service');
+      expect(statsReplies.length, equals(1));
+      final epStats = statsReplies.single.endpoints.single;
+      expect(epStats.name, equals('echo'));
+      expect(epStats.numRequests, equals(1));
+      expect(epStats.numErrors, equals(0));
+
+      await service.stop();
+      await client.close();
+    });
   });
 }
