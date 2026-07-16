@@ -1,3 +1,5 @@
+## Unreleased
+
 ## 1.2.0
 
 * Add heartbeats, clustering, robust reconnection, buffer limits, pull flow control, and NATS Microservices Framework (ADR-32).
