@@ -1,6 +1,6 @@
 ## 1.2.1
 
-* Start new development cycle.
+* Update README.md with Microservices Framework (ADR-32) and Client Discovery documentation.
 
 ## 1.2.0
 
