@@ -575,6 +575,66 @@ for (final file in files) {
 // Delete object chunks and reclaim space
 await os.delete('report.pdf');
 ```
+## 🛠️ Microservices Framework (ADR-32) & Discovery
+
+The Microservices Framework allows you to easily build, host, and programmatically discover structured services on top of NATS.
+
+### 1. Host a Microservice
+You can register and start a service with structured configuration and endpoints:
+
+```dart
+// 1. Configure the service
+final service = await client.addService(ServiceConfig(
+  name: 'email-service',
+  version: '1.0.0',
+  description: 'Handles system emails',
+  metadata: {'region': 'us-west'},
+  endpoints: [
+    Endpoint(
+      name: 'send',
+      subject: 'email.send',
+      handler: (msg) {
+        print('Sending email: ${msg.string}');
+        msg.respondString('sent');
+      },
+    ),
+  ],
+));
+
+// 2. Stop the service when shutting down
+await service.stop();
+```
+
+### 2. Service Discovery (Client Side)
+Clients can query the account to discover running services, retrieve their schemas, and inspect telemetry:
+
+```dart
+// 1. Discover running services (Pings instances)
+final List<PingResponse> services = await client.discoverServices();
+for (final s in services) {
+  print('Found service: ${s.name} (ID: ${s.id}, Version: ${s.version})');
+}
+
+// 2. Query endpoint schemas and subjects (INFO)
+final List<InfoResponse> info = await client.getServicesInfo(name: 'email-service');
+for (final i in info) {
+  print('Description: ${i.description}');
+  for (final ep in i.endpoints) {
+    print('Endpoint: ${ep.name} on subject: ${ep.subject}');
+  }
+}
+
+// 3. Retrieve operational metrics (STATS)
+final List<StatsResponse> stats = await client.getServicesStats(name: 'email-service');
+for (final s in stats) {
+  print('Started: ${s.started}');
+  for (final ep in s.endpoints) {
+    print('Endpoint ${ep.name}: requests=${ep.numRequests}, errors=${ep.numErrors}');
+  }
+}
+```
+
+---
 
 ## 🚀 Running Examples
 
