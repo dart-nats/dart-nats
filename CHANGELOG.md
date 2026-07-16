@@ -1,3 +1,7 @@
+## Unreleased
+
+* Add client-side service discovery for the ADR-32 Microservices framework, complementing the recently-added `addService`/`MicroService`. `Client.discoverServices()`/`getServicesInfo()`/`getServicesStats()` fan a `$SRV.PING`/`INFO`/`STATS` request out to `$SRV.*` (optionally scoped to one service name, or one service+instance id) and collect every reply that arrives within a bounded window, since multiple instances can legitimately reply to a single discovery request (unlike `Client.request()`'s single-reply semantics). Adds `PingResponse`/`InfoResponse`/`EndpointInfo`/`StatsResponse`/`EndpointStatsInfo` to parse the standard `io.nats.micro.v1.*_response` payloads.
+
 ## 1.1.2
 
 * Fix `JetStream.accountInfo()` returning all-zero `Tier` for single-tier accounts by parsing usage fields from the top-level response instead of a nonexistent nested `tier` key. Also fix `Tier.fromJson` crash on uint64 sentinel values by reading fields as `num`. Thanks [nverbeek](https://github.com/nverbeek) for the contribution.
