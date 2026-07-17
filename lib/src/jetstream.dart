@@ -594,20 +594,36 @@ class JetStream {
     return true;
   }
 
-  /// List all streams
+  /// List all streams visible to the account.
+  ///
+  /// Paginates through `\$JS.API.STREAM.LIST` as needed: nats-server caps
+  /// each response to a fixed page (256 items) regardless of how many
+  /// streams actually exist, reporting the true count in the same
+  /// response's `total` field. A single unpaginated request silently drops
+  /// everything past the first page on accounts with more streams than
+  /// that -- no error, no truncation flag.
   Future<List<StreamInfo>> listStreams(
       {Duration timeout = const Duration(seconds: 2)}) async {
     const subject = '\$JS.API.STREAM.LIST';
-    final response =
-        await client.request(subject, Uint8List.fromList([]), timeout: timeout);
-    final map = jsonDecode(response.string);
-    if (map['error'] != null) {
-      throw NatsException(map['error']['description'] as String);
+    final streams = <StreamInfo>[];
+    var offset = 0;
+    while (true) {
+      final payload = utf8.encode(jsonEncode({'offset': offset}));
+      final response = await client
+          .request(subject, Uint8List.fromList(payload), timeout: timeout);
+      final map = jsonDecode(response.string);
+      if (map['error'] != null) {
+        throw NatsException(map['error']['description'] as String);
+      }
+      final page = (map['streams'] as List? ?? [])
+          .map((item) => StreamInfo.fromJson(item as Map<String, dynamic>))
+          .toList();
+      streams.addAll(page);
+      final total = map['total'] as int? ?? streams.length;
+      offset += page.length;
+      if (page.isEmpty || offset >= total) break;
     }
-    final list = map['streams'] as List? ?? [];
-    return list
-        .map((item) => StreamInfo.fromJson(item as Map<String, dynamic>))
-        .toList();
+    return streams;
   }
 
   /// Find a stream name by a subject it covers
@@ -648,20 +664,31 @@ class JetStream {
     return consumerInfo(streamName, consumerName, timeout: timeout);
   }
 
-  /// List consumers on a stream
+  /// List consumers on a stream, paginating through
+  /// `\$JS.API.CONSUMER.LIST.<stream>` the same way [listStreams] does --
+  /// see its doc comment for why an unpaginated request isn't safe.
   Future<List<ConsumerInfo>> listConsumers(String streamName,
       {Duration timeout = const Duration(seconds: 2)}) async {
     final subject = '\$JS.API.CONSUMER.LIST.$streamName';
-    final response =
-        await client.request(subject, Uint8List.fromList([]), timeout: timeout);
-    final map = jsonDecode(response.string);
-    if (map['error'] != null) {
-      throw NatsException(map['error']['description'] as String);
+    final consumers = <ConsumerInfo>[];
+    var offset = 0;
+    while (true) {
+      final payload = utf8.encode(jsonEncode({'offset': offset}));
+      final response = await client
+          .request(subject, Uint8List.fromList(payload), timeout: timeout);
+      final map = jsonDecode(response.string);
+      if (map['error'] != null) {
+        throw NatsException(map['error']['description'] as String);
+      }
+      final page = (map['consumers'] as List? ?? [])
+          .map((item) => ConsumerInfo.fromJson(item as Map<String, dynamic>))
+          .toList();
+      consumers.addAll(page);
+      final total = map['total'] as int? ?? consumers.length;
+      offset += page.length;
+      if (page.isEmpty || offset >= total) break;
     }
-    final list = map['consumers'] as List? ?? [];
-    return list
-        .map((item) => ConsumerInfo.fromJson(item as Map<String, dynamic>))
-        .toList();
+    return consumers;
   }
 
   /// Create a consumer (durable or ephemeral) on a stream
