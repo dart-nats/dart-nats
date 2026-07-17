@@ -128,6 +128,11 @@ class Message<T> {
   }
 
   /// Acknowledge the message (JetStream)
+  ///
+  /// Fire-and-forget: publishes the ack but does not wait for (or report)
+  /// whether it actually reached the server, so a disconnected client still
+  /// returns `true`. Prefer [ackSync] when the caller needs to know the ack
+  /// really landed.
   bool ack() {
     if (replyTo == null || replyTo == '') return false;
     _client.pub(replyTo, Uint8List.fromList(utf8.encode('+ACK')));
@@ -135,6 +140,8 @@ class Message<T> {
   }
 
   /// Negatively acknowledge the message (JetStream)
+  ///
+  /// Fire-and-forget: see [ack]'s doc comment. Prefer [nakSync].
   bool nak() {
     if (replyTo == null || replyTo == '') return false;
     _client.pub(replyTo, Uint8List.fromList(utf8.encode('-NAK')));
@@ -142,6 +149,8 @@ class Message<T> {
   }
 
   /// Terminate the message, preventing redelivery (JetStream)
+  ///
+  /// Fire-and-forget: see [ack]'s doc comment. Prefer [termSync].
   bool term() {
     if (replyTo == null || replyTo == '') return false;
     _client.pub(replyTo, Uint8List.fromList(utf8.encode('+TERM')));
@@ -149,6 +158,8 @@ class Message<T> {
   }
 
   /// Indicate message processing is still in progress (JetStream)
+  ///
+  /// Fire-and-forget: see [ack]'s doc comment. Prefer [inProgressSync].
   bool inProgress() {
     if (replyTo == null || replyTo == '') return false;
     _client.pub(replyTo, Uint8List.fromList(utf8.encode('+WPI')));
@@ -200,6 +211,40 @@ class Message<T> {
       throw NatsException('Cannot acknowledge message: no reply subject');
     }
     await _client.request(replyTo!, Uint8List.fromList(utf8.encode('+ACK')),
+        timeout: timeout);
+  }
+
+  /// Negatively acknowledge the message and wait for confirmation from the
+  /// JetStream server (synchronous nak) -- throws if it doesn't land, e.g.
+  /// because the client is disconnected.
+  Future<void> nakSync({Duration timeout = const Duration(seconds: 2)}) async {
+    if (replyTo == null || replyTo == '') {
+      throw NatsException('Cannot nak message: no reply subject');
+    }
+    await _client.request(replyTo!, Uint8List.fromList(utf8.encode('-NAK')),
+        timeout: timeout);
+  }
+
+  /// Terminate the message, preventing redelivery, and wait for
+  /// confirmation from the JetStream server (synchronous term) -- throws if
+  /// it doesn't land, e.g. because the client is disconnected.
+  Future<void> termSync({Duration timeout = const Duration(seconds: 2)}) async {
+    if (replyTo == null || replyTo == '') {
+      throw NatsException('Cannot terminate message: no reply subject');
+    }
+    await _client.request(replyTo!, Uint8List.fromList(utf8.encode('+TERM')),
+        timeout: timeout);
+  }
+
+  /// Indicate message processing is still in progress and wait for
+  /// confirmation from the JetStream server (synchronous in-progress) --
+  /// throws if it doesn't land, e.g. because the client is disconnected.
+  Future<void> inProgressSync(
+      {Duration timeout = const Duration(seconds: 2)}) async {
+    if (replyTo == null || replyTo == '') {
+      throw NatsException('Cannot mark message in progress: no reply subject');
+    }
+    await _client.request(replyTo!, Uint8List.fromList(utf8.encode('+WPI')),
         timeout: timeout);
   }
 }
