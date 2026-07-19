@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dart_nats/dart_nats.dart';
@@ -103,6 +104,87 @@ void main() {
       expect(result, true);
       msg = await sub.stream.first;
       expect(String.fromCharCodes(msg.byte), equals('message2'));
+      await client.close();
+    });
+
+    test('background reconnect retries after failed Socket.connect', () async {
+      var client = Client();
+      var connectCalls = 0;
+      var onConnectCount = 0;
+      var onReconnectCount = 0;
+      final attemptTimes = <DateTime>[];
+
+      client.onConnect = () => onConnectCount++;
+      client.onReconnect = () => onReconnectCount++;
+
+      await client.connect(
+        Uri.parse('nats://localhost:4222'),
+        retry: true,
+        retryCount: -1,
+        timeout: 2,
+        retryInterval: 1,
+      );
+      expect(client.status, equals(Status.connected));
+      expect(onConnectCount, equals(1));
+      expect(onReconnectCount, equals(0));
+
+      const failCount = 3;
+      client.debugSocketConnect = (host, port, {timeout}) async {
+        connectCalls++;
+        attemptTimes.add(DateTime.now());
+        if (connectCalls <= failCount) {
+          throw Exception('Simulated offline connect failure');
+        }
+        return Socket.connect(host, port, timeout: timeout);
+      };
+
+      await client.tcpClose();
+      await client.waitUntilConnected().timeout(const Duration(seconds: 15));
+
+      expect(client.status, equals(Status.connected));
+      expect(connectCalls, greaterThan(failCount));
+      expect(onReconnectCount, equals(1));
+      expect(onConnectCount, equals(1));
+
+      // retryInterval is 1s; failures should be spaced by ~1s (not busy-spin).
+      expect(attemptTimes.length, greaterThanOrEqualTo(2));
+      final gap = attemptTimes[1].difference(attemptTimes[0]);
+      expect(gap.inMilliseconds, greaterThanOrEqualTo(800));
+
+      var sub = client.sub('reconnect_fail_then_ok');
+      await client.pub(
+          'reconnect_fail_then_ok', Uint8List.fromList('ok'.codeUnits));
+      var msg = await sub.stream.first.timeout(const Duration(seconds: 5));
+      expect(String.fromCharCodes(msg.byte), equals('ok'));
+
+      client.debugSocketConnect = null;
+      await client.close();
+    });
+
+    test('successful reconnect fires onReconnect not onConnect', () async {
+      var client = Client();
+      var onConnectCount = 0;
+      var onReconnectCount = 0;
+      client.onConnect = () => onConnectCount++;
+      client.onReconnect = () => onReconnectCount++;
+
+      await client.connect(
+        Uri.parse('nats://localhost:4222'),
+        retry: true,
+        retryCount: -1,
+        retryInterval: 1,
+      );
+      expect(onConnectCount, equals(1));
+      expect(onReconnectCount, equals(0));
+
+      await client.tcpClose();
+      await client.waitUntilConnected();
+
+      expect(client.status, equals(Status.connected));
+      expect(onReconnectCount, equals(1));
+      expect(onConnectCount, equals(1));
+
+      await client.close();
     });
     test('status stream', () async {
       var client = Client();

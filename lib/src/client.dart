@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'platform/platform.dart';
 import 'dart:typed_data';
 
+import 'package:meta/meta.dart';
 import 'package:mutex/mutex.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -169,6 +170,16 @@ class Client {
   int _reconnectCount = 3;
   bool _wasConnected = false;
   bool _reconnecting = false;
+  /// True while completing a background reconnect cycle (for [onReconnect]).
+  bool _reconnectCycle = false;
+
+  /// Override for [Socket.connect] used by tests to simulate connect failures.
+  /// Return a platform [Socket] (or throw) — typed as [Object] so VM/web stubs unify.
+  @visibleForTesting
+  Future<Object> Function(String host, int port, {Duration? timeout})?
+      debugSocketConnect;
+
+  static const Duration _socketCleanupTimeout = Duration(seconds: 2);
 
   int _ssid = 0;
   int _connectionId = 0;
@@ -583,7 +594,7 @@ class Client {
           if (port == 0) {
             port = 4222;
           }
-          _tcpSocket = await Socket.connect(
+          _tcpSocket = await _socketConnect(
             uri.host,
             port,
             timeout: Duration(seconds: timeout),
@@ -605,6 +616,7 @@ class Client {
             if (onError != null) {
               onError!(e);
             }
+            _setStatus(Status.disconnected);
           }).onDone(() {
             if (currentSocket != _tcpSocket) return;
             _setStatus(Status.disconnected);
@@ -616,7 +628,7 @@ class Client {
           if (port == 0) {
             port = 4443;
           }
-          _tcpSocket = await Socket.connect(
+          _tcpSocket = await _socketConnect(
             uri.host,
             port,
             timeout: Duration(seconds: timeout),
@@ -636,6 +648,7 @@ class Client {
             if (onError != null) {
               onError!(e);
             }
+            _setStatus(Status.disconnected);
           });
           return true;
 
@@ -1272,7 +1285,6 @@ class Client {
         }
       }
     }
-    final oldStatus = _status;
     _status = newStatus;
     _statusController.add(newStatus);
 
@@ -1294,11 +1306,12 @@ class Client {
         _pingsOut++;
         _add('ping');
       });
-      if (oldStatus == Status.reconnecting && onReconnect != null) {
+      if (_reconnectCycle && onReconnect != null) {
         onReconnect!();
-      } else if (onConnect != null) {
+      } else if (!_reconnectCycle && onConnect != null) {
         onConnect!();
       }
+      _reconnectCycle = false;
     } else if (newStatus == Status.disconnected) {
       _pingTimer?.cancel();
       _pingTimer = null;
@@ -1311,6 +1324,8 @@ class Client {
       }
     } else if (newStatus == Status.closed) {
       _wasConnected = false;
+      _reconnectCycle = false;
+      _reconnecting = false;
       _pingTimer?.cancel();
       _pingTimer = null;
       _pingsOut = 0;
@@ -1323,6 +1338,7 @@ class Client {
   void _reconnectLoopBackground() async {
     if (_reconnecting) return;
     _reconnecting = true;
+    _reconnectCycle = true;
 
     int attempts = 0;
     final maxAttempts = _reconnectCount == -1
@@ -1330,7 +1346,8 @@ class Client {
         : _reconnectCount * _serverPool.length;
 
     while (_retry &&
-        status == Status.disconnected &&
+        status != Status.connected &&
+        status != Status.closed &&
         (attempts < maxAttempts || maxAttempts == -1)) {
       _setStatus(Status.reconnecting);
       final currentUri = _getNextServer();
@@ -1349,23 +1366,37 @@ class Client {
           return;
         }
       } catch (err) {
-        await _cleanUpSockets();
+        await _cleanUpSocketsSoft();
         if (onError != null) {
           onError!(err);
         }
       }
       attempts++;
       if (_retry &&
-          status == Status.disconnected &&
+          status != Status.connected &&
+          status != Status.closed &&
           (attempts < maxAttempts || maxAttempts == -1)) {
         await Future<void>.delayed(Duration(seconds: _reconnectInterval));
       }
     }
 
     _reconnecting = false;
-    if (status == Status.disconnected) {
+    _reconnectCycle = false;
+    if (status != Status.connected && status != Status.closed) {
       await close();
     }
+  }
+
+  Future<Socket> _socketConnect(
+    String host,
+    int port, {
+    Duration? timeout,
+  }) async {
+    final override = debugSocketConnect;
+    if (override != null) {
+      return await override(host, port, timeout: timeout) as Socket;
+    }
+    return Socket.connect(host, port, timeout: timeout);
   }
 
   Future<void> _cleanUpSockets() async {
@@ -1380,6 +1411,28 @@ class Client {
     final tcp = _tcpSocket;
     _tcpSocket = null;
     await tcp?.close();
+  }
+
+  /// Null socket refs first, then close with a short timeout so reconnect
+  /// retries cannot hang on a zombie TCP close after abrupt network loss.
+  Future<void> _cleanUpSocketsSoft() async {
+    final ws = _wsChannel;
+    _wsChannel = null;
+    final secure = _secureSocket;
+    _secureSocket = null;
+    final tcp = _tcpSocket;
+    _tcpSocket = null;
+
+    Future<void> closeQuietly(Future<dynamic>? closing) async {
+      if (closing == null) return;
+      try {
+        await closing.timeout(_socketCleanupTimeout);
+      } catch (_) {}
+    }
+
+    await closeQuietly(ws?.sink.close());
+    await closeQuietly(secure?.close());
+    await closeQuietly(tcp?.close());
   }
 
   /// Close connection and prevent any future reconnect retries
