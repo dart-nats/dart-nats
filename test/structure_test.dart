@@ -78,7 +78,7 @@ void main() {
       var server = Client();
       await server.connect(Uri.parse('nats://localhost:4222'));
       server.registerJsonDecoder<Student>(json2Student);
-      var service = server.sub<Student>('service');
+      var service = server.sub<Student>('structure_service');
       unawaited(service.stream.first.then((m) {
         m.respondString(jsonEncode(m.data.toJson()));
       }));
@@ -87,7 +87,7 @@ void main() {
       var s1 = Student('id', 'name', 1);
       await client.connect(Uri.parse('ws://localhost:8080'));
       var receive =
-          await client.requestString('service', jsonEncode(s1.toJson()));
+          await client.requestString('structure_service', jsonEncode(s1.toJson()));
       var s2 = Student.fromJson(jsonDecode(receive.string));
       await client.close();
       await server.close();
@@ -97,7 +97,7 @@ void main() {
       var server = Client();
       server.registerJsonDecoder<Student>(json2Student);
       await server.connect(Uri.parse('nats://localhost:4222'));
-      var service = server.sub<Student>('service');
+      var service = server.sub<Student>('structure_service');
       unawaited(service.stream.first.then((m) {
         m.respondString(jsonEncode(m.data.toJson()));
       }));
@@ -107,7 +107,7 @@ void main() {
       var s1 = Student('id', 'name', 1);
       await client.connect(Uri.parse('ws://localhost:8080'));
       var receive = await client.requestString<Student>(
-          'service', jsonEncode(s1.toJson()));
+          'structure_service', jsonEncode(s1.toJson()));
       var s2 = receive.data;
       await client.close();
       await server.close();

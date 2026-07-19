@@ -1,3 +1,10 @@
+## 1.2.3
+
+* Fix background reconnection loop getting stuck or stopping prematurely after network loss by evaluating connection and closed states more robustly.
+* Fix socket cleanups hanging on zombie connections during abrupt network loss by introducing a soft cleanup with a 2-second timeout window.
+* Correct connection callback trigger logic, ensuring `onReconnect` correctly fires during a reconnection cycle instead of `onConnect`.
+* Many thanks to contributor [@JuanCordovaLazo](https://github.com/JuanCordovaLazo) for these crucial reconnect fixes.
+
 ## 1.2.2
 
 * Fix `JetStream.listStreams()`/`listConsumers()` silently truncating at the server's page size (256 items) instead of paginating via `offset`/`total` — accounts with more streams/consumers than that lost visibility into everything past the first page, with no error or truncation flag.

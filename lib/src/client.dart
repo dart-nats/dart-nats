@@ -649,6 +649,9 @@ class Client {
               onError!(e);
             }
             _setStatus(Status.disconnected);
+          }).onDone(() {
+            if (currentSocket != _tcpSocket) return;
+            _setStatus(Status.disconnected);
           });
           return true;
 
@@ -1423,16 +1426,21 @@ class Client {
     final tcp = _tcpSocket;
     _tcpSocket = null;
 
-    Future<void> closeQuietly(Future<dynamic>? closing) async {
-      if (closing == null) return;
-      try {
-        await closing.timeout(_socketCleanupTimeout);
-      } catch (_) {}
-    }
-
-    await closeQuietly(ws?.sink.close());
-    await closeQuietly(secure?.close());
-    await closeQuietly(tcp?.close());
+    try {
+      if (ws != null) {
+        await ws.sink.close().timeout(_socketCleanupTimeout);
+      }
+    } catch (_) {}
+    try {
+      if (secure != null) {
+        await secure.close().timeout(_socketCleanupTimeout);
+      }
+    } catch (_) {}
+    try {
+      if (tcp != null) {
+        await tcp.close().timeout(_socketCleanupTimeout);
+      }
+    } catch (_) {}
   }
 
   /// Close connection and prevent any future reconnect retries
