@@ -1,7 +1,8 @@
 import 'package:dart_nats/dart_nats.dart';
 import 'package:test/test.dart';
 
-// Issue #36: https://github.com/chartchuo/dart-nats/issues/36
+// Issue #36: https://github.com/dart-nats/dart-nats/issues/36
+
 // Connect using tls:// scheme to a server that supports TLS but does not explicitly require it in its INFO payload.
 
 void main() {

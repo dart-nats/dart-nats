@@ -1,7 +1,8 @@
 import 'package:dart_nats/dart_nats.dart';
 import 'package:test/test.dart';
 
-// Issue #37: https://github.com/chartchuo/dart-nats/issues/37
+// Issue #37: https://github.com/dart-nats/dart-nats/issues/37
+
 // WebSocket connection failure should be caught gracefully instead of causing unhandled asynchronous exceptions.
 
 void main() {

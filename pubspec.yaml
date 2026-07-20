@@ -1,8 +1,8 @@
 name: dart_nats
 description: A Dart client for the NATS messaging system. Design to use with Dart and flutter.
 version: 1.2.3
-homepage: https://github.com/chartchuo
-repository: https://github.com/chartchuo/dart-nats
+homepage: https://github.com/dart-nats
+repository: https://github.com/dart-nats/dart-nats
 
 environment:
   sdk: '>=2.15.0 <4.0.0'

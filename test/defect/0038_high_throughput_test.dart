@@ -3,7 +3,8 @@ import 'dart:typed_data';
 import 'package:dart_nats/dart_nats.dart';
 import 'package:test/test.dart';
 
-// Issue #38: https://github.com/chartchuo/dart-nats/issues/38
+// Issue #38: https://github.com/dart-nats/dart-nats/issues/38
+
 // Resolves high throughput performance degradation / stream bottlenecks under high message throughput.
 
 void main() {
