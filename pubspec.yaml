@@ -1,6 +1,6 @@
 name: dart_nats
 description: A Dart client for the NATS messaging system. Design to use with Dart and flutter.
-version: 1.2.3
+version: 1.2.4
 homepage: https://github.com/dart-nats
 repository: https://github.com/dart-nats/dart-nats
 

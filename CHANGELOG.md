@@ -1,3 +1,7 @@
+## 1.2.4
+
+* Update package homepage and repository URLs to point to the new `dart-nats` GitHub organization.
+
 ## 1.2.3
 
 * Fix background reconnection loop getting stuck or stopping prematurely after network loss by evaluating connection and closed states more robustly.
