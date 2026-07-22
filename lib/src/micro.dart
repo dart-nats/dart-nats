@@ -256,8 +256,7 @@ class PingResponse {
       id: json['id'] as String,
       name: json['name'] as String,
       version: json['version'] as String,
-      metadata:
-          (json['metadata'] as Map?)?.cast<String, String>() ?? const {},
+      metadata: (json['metadata'] as Map?)?.cast<String, String>() ?? const {},
     );
   }
 }
@@ -285,8 +284,7 @@ class EndpointInfo {
     return EndpointInfo(
       name: json['name'] as String,
       subject: json['subject'] as String,
-      metadata:
-          (json['metadata'] as Map?)?.cast<String, String>() ?? const {},
+      metadata: (json['metadata'] as Map?)?.cast<String, String>() ?? const {},
     );
   }
 }
@@ -328,8 +326,7 @@ class InfoResponse {
       name: json['name'] as String,
       version: json['version'] as String,
       description: json['description'] as String? ?? '',
-      metadata:
-          (json['metadata'] as Map?)?.cast<String, String>() ?? const {},
+      metadata: (json['metadata'] as Map?)?.cast<String, String>() ?? const {},
       endpoints: (json['endpoints'] as List? ?? const [])
           .map((e) => EndpointInfo.fromJson(e as Map<String, dynamic>))
           .toList(),
@@ -430,8 +427,7 @@ class StatsResponse {
       name: json['name'] as String,
       version: json['version'] as String,
       started: DateTime.parse(json['started'] as String),
-      metadata:
-          (json['metadata'] as Map?)?.cast<String, String>() ?? const {},
+      metadata: (json['metadata'] as Map?)?.cast<String, String>() ?? const {},
       endpoints: (endpointsList ?? const [])
           .map((e) => EndpointStatsInfo.fromJson(e as Map<String, dynamic>))
           .toList(),

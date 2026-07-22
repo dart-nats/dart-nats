@@ -364,6 +364,12 @@ class ConsumerInfo {
   /// Number of redelivered messages
   final int numRedelivered;
 
+  /// Whether the consumer is currently paused (NATS 2.11+, via [JetStream.pauseConsumer])
+  final bool paused;
+
+  /// When the current pause expires, if [paused] is true
+  final DateTime? pauseUntil;
+
   /// Constructor for ConsumerInfo
   ConsumerInfo({
     required this.type,
@@ -375,6 +381,8 @@ class ConsumerInfo {
     required this.numWaiting,
     required this.numAckPending,
     required this.numRedelivered,
+    this.paused = false,
+    this.pauseUntil,
   });
 
   /// Factory from JSON map
@@ -396,6 +404,44 @@ class ConsumerInfo {
       numWaiting: json['num_waiting'] as int? ?? 0,
       numAckPending: json['num_ack_pending'] as int? ?? 0,
       numRedelivered: json['num_redelivered'] as int? ?? 0,
+      paused: json['paused'] as bool? ?? false,
+      pauseUntil: json['pause_until'] != null
+          ? DateTime.tryParse(json['pause_until'] as String)
+          : null,
+    );
+  }
+}
+
+/// Response to [JetStream.pauseConsumer]/[JetStream.resumeConsumer], mirroring
+/// the server's `io.nats.jetstream.api.v1.consumer_pause_response`.
+class ConsumerPauseResponse {
+  /// Whether the consumer is now paused
+  final bool paused;
+
+  /// When the pause expires, if [paused] is true
+  final DateTime? pauseUntil;
+
+  /// Time remaining on the pause, if [paused] is true
+  final Duration? pauseRemaining;
+
+  /// Constructor for ConsumerPauseResponse
+  ConsumerPauseResponse({
+    required this.paused,
+    this.pauseUntil,
+    this.pauseRemaining,
+  });
+
+  /// Factory from JSON map
+  factory ConsumerPauseResponse.fromJson(Map<String, dynamic> json) {
+    final pauseRemainingNanos = json['pause_remaining'] as num?;
+    return ConsumerPauseResponse(
+      paused: json['paused'] as bool? ?? false,
+      pauseUntil: json['pause_until'] != null
+          ? DateTime.tryParse(json['pause_until'] as String)
+          : null,
+      pauseRemaining: pauseRemainingNanos != null
+          ? Duration(microseconds: (pauseRemainingNanos / 1000).round())
+          : null,
     );
   }
 }
@@ -759,6 +805,42 @@ class JetStream {
       throw NatsException(map['error']['description'] as String);
     }
     return true;
+  }
+
+  /// Pause a consumer until [pauseUntil] (NATS 2.11+), suspending message
+  /// delivery/pull-ability without deleting the consumer. Calls
+  /// `\$JS.API.CONSUMER.PAUSE.<stream>.<consumer>` with a `pause_until` time.
+  /// Use [resumeConsumer] (or pass a time already in the past) to unpause.
+  Future<ConsumerPauseResponse> pauseConsumer(
+      String streamName, String consumerName, DateTime pauseUntil,
+      {Duration timeout = const Duration(seconds: 2)}) async {
+    final subject = '\$JS.API.CONSUMER.PAUSE.$streamName.$consumerName';
+    final payload = utf8.encode(
+        jsonEncode({'pause_until': pauseUntil.toUtc().toIso8601String()}));
+    final response = await client.request(subject, Uint8List.fromList(payload),
+        timeout: timeout);
+    final map = jsonDecode(response.string);
+    if (map['error'] != null) {
+      throw NatsException(map['error']['description'] as String);
+    }
+    return ConsumerPauseResponse.fromJson(map as Map<String, dynamic>);
+  }
+
+  /// Resume a previously-[pauseConsumer]-paused consumer immediately, by
+  /// sending the same `\$JS.API.CONSUMER.PAUSE` request with no `pause_until`
+  /// (the server's documented way to clear an active pause).
+  Future<ConsumerPauseResponse> resumeConsumer(
+      String streamName, String consumerName,
+      {Duration timeout = const Duration(seconds: 2)}) async {
+    final subject = '\$JS.API.CONSUMER.PAUSE.$streamName.$consumerName';
+    final response = await client.request(
+        subject, Uint8List.fromList(utf8.encode(jsonEncode({}))),
+        timeout: timeout);
+    final map = jsonDecode(response.string);
+    if (map['error'] != null) {
+      throw NatsException(map['error']['description'] as String);
+    }
+    return ConsumerPauseResponse.fromJson(map as Map<String, dynamic>);
   }
 
   /// Pull a batch of messages from a pull consumer (Deprecated: Use consumer(stream, consumer).fetch() instead)

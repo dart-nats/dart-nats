@@ -3,8 +3,7 @@ import 'package:test/test.dart';
 
 void main() {
   group('AccountInfo.fromJson', () {
-    test('reads usage/limits from the top level of a single-tier response',
-        () {
+    test('reads usage/limits from the top level of a single-tier response', () {
       // Captured verbatim from a live `nats:latest -js` server's
       // `$JS.API.INFO` response after creating one stream. Single-tier
       // (non-multi-tenant) accounts — the common case — have no `tier` key
@@ -36,7 +35,8 @@ void main() {
       expect(info.tiers, isEmpty);
     });
 
-    test('parses multi-tier accounts into the tiers map, keeping the '
+    test(
+        'parses multi-tier accounts into the tiers map, keeping the '
         'top-level fields as the account-wide aggregate', () {
       final json = {
         'streams': 2,

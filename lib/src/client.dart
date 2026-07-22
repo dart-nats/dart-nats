@@ -155,6 +155,7 @@ class Client {
   final _subs = <int, Subscription>{};
   final _backendSubs = <int, bool>{};
   final _pubBuffer = <_Pub>[];
+
   /// Heartbeat ping interval duration
   Duration pingInterval = const Duration(seconds: 120);
 
@@ -170,6 +171,7 @@ class Client {
   int _reconnectCount = 3;
   bool _wasConnected = false;
   bool _reconnecting = false;
+
   /// True while completing a background reconnect cycle (for [onReconnect]).
   bool _reconnectCycle = false;
 
@@ -1344,9 +1346,8 @@ class Client {
     _reconnectCycle = true;
 
     int attempts = 0;
-    final maxAttempts = _reconnectCount == -1
-        ? -1
-        : _reconnectCount * _serverPool.length;
+    final maxAttempts =
+        _reconnectCount == -1 ? -1 : _reconnectCount * _serverPool.length;
 
     while (_retry &&
         status != Status.connected &&

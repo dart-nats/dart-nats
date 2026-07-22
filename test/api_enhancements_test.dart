@@ -521,7 +521,8 @@ SUACSSL3UAHUDXKFSNVUZRF5UHPMWZ6BFDTJ7M6USDXIEDNPPQYYYCU3VY
       await client.close();
     });
 
-    test('NATS Microservices Framework (ADR-32) endpoints & monitoring', () async {
+    test('NATS Microservices Framework (ADR-32) endpoints & monitoring',
+        () async {
       final client = Client();
       await client.connect(Uri.parse('nats://localhost:4222'), retry: false);
 
@@ -546,20 +547,23 @@ SUACSSL3UAHUDXKFSNVUZRF5UHPMWZ6BFDTJ7M6USDXIEDNPPQYYYCU3VY
       expect(resp.string, equals('hello-response'));
 
       // 2. Query PING
-      final pingResp = await client.requestString('\$SRV.PING.test-service', '');
+      final pingResp =
+          await client.requestString('\$SRV.PING.test-service', '');
       final pingMap = jsonDecode(pingResp.string);
       expect(pingMap['name'], equals('test-service'));
       expect(pingMap['version'], equals('1.2.3'));
 
       // 3. Query INFO
-      final infoResp = await client.requestString('\$SRV.INFO.test-service', '');
+      final infoResp =
+          await client.requestString('\$SRV.INFO.test-service', '');
       final infoMap = jsonDecode(infoResp.string);
       expect(infoMap['name'], equals('test-service'));
       expect(infoMap['description'], equals('Test Microservice'));
       expect(infoMap['endpoints'][0]['name'], equals('hello'));
 
       // 4. Query STATS
-      final statsResp = await client.requestString('\$SRV.STATS.test-service', '');
+      final statsResp =
+          await client.requestString('\$SRV.STATS.test-service', '');
       final statsMap = jsonDecode(statsResp.string);
       expect(statsMap['name'], equals('test-service'));
       final epStats = statsMap['stats']['endpoints'][0];
@@ -576,11 +580,9 @@ SUACSSL3UAHUDXKFSNVUZRF5UHPMWZ6BFDTJ7M6USDXIEDNPPQYYYCU3VY
       await client.connect(Uri.parse('nats://localhost:4222'), retry: false);
 
       final instance1 = Client();
-      await instance1.connect(Uri.parse('nats://localhost:4222'),
-          retry: false);
+      await instance1.connect(Uri.parse('nats://localhost:4222'), retry: false);
       final instance2 = Client();
-      await instance2.connect(Uri.parse('nats://localhost:4222'),
-          retry: false);
+      await instance2.connect(Uri.parse('nats://localhost:4222'), retry: false);
 
       final service1 = await instance1.addService(ServiceConfig(
         name: 'discovery-fanout-service',
@@ -647,8 +649,8 @@ SUACSSL3UAHUDXKFSNVUZRF5UHPMWZ6BFDTJ7M6USDXIEDNPPQYYYCU3VY
       expect(infoReplies.single.description,
           equals('Discovery detail test service'));
       expect(infoReplies.single.endpoints.single.name, equals('echo'));
-      expect(
-          infoReplies.single.endpoints.single.subject, equals('discovery.echo'));
+      expect(infoReplies.single.endpoints.single.subject,
+          equals('discovery.echo'));
 
       final statsReplies =
           await client.getServicesStats(name: 'discovery-detail-service');

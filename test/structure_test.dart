@@ -86,8 +86,8 @@ void main() {
       var client = Client();
       var s1 = Student('id', 'name', 1);
       await client.connect(Uri.parse('ws://localhost:8080'));
-      var receive =
-          await client.requestString('structure_service', jsonEncode(s1.toJson()));
+      var receive = await client.requestString(
+          'structure_service', jsonEncode(s1.toJson()));
       var s2 = Student.fromJson(jsonDecode(receive.string));
       await client.close();
       await server.close();

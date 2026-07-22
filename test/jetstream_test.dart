@@ -447,6 +447,56 @@ void main() {
       await js.deleteStream(streamName);
     });
 
+    test('Consumer Pause/Resume', () async {
+      final streamName = 'pause-resume-test';
+      final subject = 'pause.resume.subj';
+
+      final stream = await js.createStream(StreamConfig(
+        name: streamName,
+        subjects: [subject],
+        storage: 'memory',
+      ));
+
+      final consumerName = 'pause-resume-cons';
+      final consumer = await stream.createConsumer(ConsumerConfig(
+        durable: consumerName,
+        ackPolicy: 'explicit',
+        deliverPolicy: 'all',
+      ));
+
+      await js.publishString(subject, 'before-pause');
+
+      // 1. pauseConsumer
+      final pauseUntil =
+          DateTime.now().toUtc().add(const Duration(seconds: 30));
+      final pauseResponse =
+          await js.pauseConsumer(streamName, consumerName, pauseUntil);
+      expect(pauseResponse.paused, isTrue);
+
+      final pausedInfo = await js.consumerInfo(streamName, consumerName);
+      expect(pausedInfo.paused, isTrue);
+
+      // While paused, a pull fetch gets nothing back rather than the pending message.
+      final fetchWhilePaused = await consumer.fetch(
+          batch: 1, timeout: const Duration(milliseconds: 500));
+      expect(fetchWhilePaused, isEmpty);
+
+      // 2. resumeConsumer
+      final resumeResponse = await js.resumeConsumer(streamName, consumerName);
+      expect(resumeResponse.paused, isFalse);
+
+      final resumedInfo = await js.consumerInfo(streamName, consumerName);
+      expect(resumedInfo.paused, isFalse);
+
+      // Now the pending message can actually be pulled.
+      final fetchAfterResume = await consumer.fetch(batch: 1);
+      expect(fetchAfterResume.length, equals(1));
+      expect(fetchAfterResume[0].string, equals('before-pause'));
+
+      await js.deleteConsumer(streamName, consumerName);
+      await js.deleteStream(streamName);
+    });
+
     test('Account Info details', () async {
       final streamName = 'account-info-test';
       await js.createStream(StreamConfig(
