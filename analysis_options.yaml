@@ -1,3 +1,7 @@
+analyzer:
+  exclude:
+    - example/demo/**
+
 linter:
   rules:
      - public_member_api_docs
