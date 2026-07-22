@@ -27,7 +27,12 @@ jobs:
       - name: Analyze
         run: dart analyze
       - name: Check formatting
-        run: dart format --output=none --set-exit-if-changed .
+        # Scoped to the package's own source, not the whole repo tree:
+        # example/demo is a separate Flutter app whose analysis_options.yaml
+        # can't resolve flutter_lints without a `flutter pub get`, which
+        # makes `dart format` fall back to a language version too old for
+        # its super-parameter syntax and fail to parse it.
+        run: dart format --output=none --set-exit-if-changed lib test example/*.dart
       - name: Generate TLS test certificates
         run: |
           openssl req -newkey rsa:2048 -new -nodes -x509 -days 3650 \
