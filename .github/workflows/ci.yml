@@ -39,6 +39,13 @@ jobs:
             -out test/config/server-cert.pem \
             -keyout test/config/server-key.pem \
             -subj "/C=US/ST=State/L=City/O=Organization/OU=OrgUnit/CN=localhost"
+      - name: Install NATS CLI
+        # test/interop_test.dart shells out to the official `nats` CLI to
+        # verify interop with this package -- not preinstalled on runners.
+        run: |
+          curl -sf https://binaries.nats.dev/nats-io/natscli/nats@latest | sh
+          sudo mv ./nats /usr/local/bin/nats
+          nats --version
       - name: Start NATS test infrastructure
         run: docker compose up -d
       - name: Wait for NATS to accept connections

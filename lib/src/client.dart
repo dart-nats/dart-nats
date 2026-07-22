@@ -1309,6 +1309,13 @@ class Client {
           return;
         }
         _pingsOut++;
+        final completer = Completer<void>();
+        _pingCompleters.add(completer);
+        // A PONG reply proves the connection is alive -- reset the missed-
+        // ping counter. Without this, _pingsOut only ever increases and the
+        // heartbeat unconditionally disconnects after maxPingsOut ticks
+        // regardless of whether the server is actually responding.
+        completer.future.then((_) => _pingsOut = 0, onError: (_) {});
         _add('ping');
       });
       if (_reconnectCycle && onReconnect != null) {
