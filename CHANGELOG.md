@@ -1,3 +1,9 @@
+## 1.3.0
+
+* Add consumer pause/resume support (NATS 2.11+): `JetStream.pauseConsumer(stream, consumer, pauseUntil)` and `JetStream.resumeConsumer(stream, consumer)`, calling `$JS.API.CONSUMER.PAUSE`. `ConsumerInfo` also gains `paused`/`pauseUntil` fields reflecting the consumer's current pause state.
+* Add GitHub Actions CI (test suite against local NATS containers, analyze/format checks, cross-platform analyze jobs, publish dry-run) and automated `pub.dev` publishing on tagged releases.
+* Fix heartbeat pings (`pingInterval`/`maxPingsOut`) never confirming a PONG reply actually arrived before counting toward the missed-ping limit, so a connection that was responding perfectly fine still got force-disconnected after `maxPingsOut` heartbeat ticks. The periodic heartbeat now tracks its PONG the same way `Client.ping()` does and resets the missed-ping counter on receipt.
+
 ## 1.2.4
 
 * Update package homepage and repository URLs to point to the new `dart-nats` GitHub organization.

@@ -1,0 +1,137 @@
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  pull_request:
+    branches:
+      - '**'
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+      - name: Install dependencies
+        run: dart pub get
+      - name: Analyze
+        run: dart analyze
+      - name: Check formatting
+        # Scoped to the package's own source, not the whole repo tree:
+        # example/demo is a separate Flutter app whose analysis_options.yaml
+        # can't resolve flutter_lints without a `flutter pub get`, which
+        # makes `dart format` fall back to a language version too old for
+        # its super-parameter syntax and fail to parse it.
+        run: dart format --output=none --set-exit-if-changed lib test example/*.dart
+      - name: Generate TLS test certificates
+        run: |
+          openssl req -newkey rsa:2048 -new -nodes -x509 -days 3650 \
+            -out test/config/server-cert.pem \
+            -keyout test/config/server-key.pem \
+            -subj "/C=US/ST=State/L=City/O=Organization/OU=OrgUnit/CN=localhost"
+      - name: Install NATS CLI
+        # test/interop_test.dart shells out to the official `nats` CLI to
+        # verify interop with this package -- not preinstalled on runners.
+        run: |
+          curl -sf https://binaries.nats.dev/nats-io/natscli/nats@latest | sh
+          sudo mv ./nats /usr/local/bin/nats
+          nats --version
+      - name: Start NATS test infrastructure
+        run: docker compose up -d
+      - name: Wait for NATS to accept connections
+        run: |
+          timeout 30 bash -c 'until (echo > /dev/tcp/localhost/4222) 2>/dev/null; do sleep 1; done'
+      - name: Run test suite
+        # Tests share subjects on the same shared servers -- must run with a
+        # single job/concurrency of 1, or parallel runs cause test pollution
+        # (see DEVELOPMENT.md / Makefile's `test` target).
+        run: dart test -j 1
+      - name: Stop NATS test infrastructure
+        if: always()
+        run: docker compose down
+  analyze-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - name: Install dependencies
+        run: dart pub get
+      - name: Analyze
+        # Windows/macOS don't run the Docker-backed live-server suite (Docker
+        # isn't practical on macOS runners and adds little on Windows) -- this
+        # just catches breakage in lib/src/platform/'s conditional imports.
+        run: dart analyze
+  analyze-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - name: Install dependencies
+        run: dart pub get
+      - name: Analyze
+        run: dart analyze
+  package-validate:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - name: Install dependencies
+        run: dart pub get
+      - name: Validate package is publishable
+        run: dart pub publish --dry-run
+  publish:
+    needs: [test, analyze-windows, analyze-macos, package-validate]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    environment: pub.dev
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - name: Install dependencies
+        run: dart pub get
+      - name: Verify tag matches pubspec version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PUBSPEC_VERSION="$(grep -m1 '^version:' pubspec.yaml | sed 's/version:[[:space:]]*//')"
+          if [ "$TAG_VERSION" != "$PUBSPEC_VERSION" ]; then
+            echo "Tag v$TAG_VERSION does not match pubspec.yaml version $PUBSPEC_VERSION" >&2
+            exit 1
+          fi
+          if ! grep -q "^## $PUBSPEC_VERSION\$" CHANGELOG.md; then
+            echo "CHANGELOG.md has no '## $PUBSPEC_VERSION' entry" >&2
+            exit 1
+          fi
+          echo "PUBSPEC_VERSION=$PUBSPEC_VERSION" >> "$GITHUB_ENV"
+      - name: Publish to pub.dev
+        run: dart pub publish --force
+      - name: Extract changelog section
+        run: |
+          awk '/^## /{if (p) exit; if ($0 == "## '"$PUBSPEC_VERSION"'") p=1; next} p' CHANGELOG.md > release_notes.md
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          body_path: release_notes.md

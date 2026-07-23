@@ -155,6 +155,7 @@ class Client {
   final _subs = <int, Subscription>{};
   final _backendSubs = <int, bool>{};
   final _pubBuffer = <_Pub>[];
+
   /// Heartbeat ping interval duration
   Duration pingInterval = const Duration(seconds: 120);
 
@@ -170,6 +171,7 @@ class Client {
   int _reconnectCount = 3;
   bool _wasConnected = false;
   bool _reconnecting = false;
+
   /// True while completing a background reconnect cycle (for [onReconnect]).
   bool _reconnectCycle = false;
 
@@ -1307,6 +1309,13 @@ class Client {
           return;
         }
         _pingsOut++;
+        final completer = Completer<void>();
+        _pingCompleters.add(completer);
+        // A PONG reply proves the connection is alive -- reset the missed-
+        // ping counter. Without this, _pingsOut only ever increases and the
+        // heartbeat unconditionally disconnects after maxPingsOut ticks
+        // regardless of whether the server is actually responding.
+        completer.future.then((_) => _pingsOut = 0, onError: (_) {});
         _add('ping');
       });
       if (_reconnectCycle && onReconnect != null) {
@@ -1344,9 +1353,8 @@ class Client {
     _reconnectCycle = true;
 
     int attempts = 0;
-    final maxAttempts = _reconnectCount == -1
-        ? -1
-        : _reconnectCount * _serverPool.length;
+    final maxAttempts =
+        _reconnectCount == -1 ? -1 : _reconnectCount * _serverPool.length;
 
     while (_retry &&
         status != Status.connected &&
