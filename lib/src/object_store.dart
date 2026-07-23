@@ -9,6 +9,19 @@ import 'common.dart';
 import 'jetstream.dart';
 import 'inbox.dart';
 
+/// Captures the single [Digest] event a [Hash.startChunkedConversion] sink
+/// produces on [close], so a SHA-256 digest can be computed incrementally
+/// over a stream of chunks without buffering the whole payload in memory.
+class _DigestSink implements Sink<Digest> {
+  Digest? value;
+
+  @override
+  void add(Digest data) => value = data;
+
+  @override
+  void close() {}
+}
+
 /// Represents a link to another object or bucket in the Object Store.
 class ObjectLink {
   /// The bucket name the link points to
@@ -195,9 +208,13 @@ class ObjectStore {
   /// Create a new ObjectStore instance
   ObjectStore(this.client, this.bucket) : streamName = 'OBJ_$bucket';
 
-  /// Store an object in the bucket
+  /// Store an object in the bucket. If [name] already has an object stored
+  /// under it, the previous version's chunks are purged from the backing
+  /// stream once the new object is safely written, so overwriting an object
+  /// no longer leaves its old chunks orphaned server-side.
   Future<ObjectInfo> put(String name, Uint8List data,
       {String description = ''}) async {
+    final previous = await getInfo(name);
     final nuid = Nuid().next();
     final totalSize = data.length;
 
@@ -245,6 +262,11 @@ class ObjectStore {
     await client
         .jetStream()
         .publish(metadataSubject, Uint8List.fromList(payload));
+
+    if (previous != null && previous.chunks > 0 && previous.nuid != nuid) {
+      await _purgeChunks(previous.nuid);
+    }
+
     return info;
   }
 
@@ -252,6 +274,82 @@ class ObjectStore {
   Future<ObjectInfo> putBytes(String name, Uint8List data,
       {String description = ''}) {
     return put(name, data, description: description);
+  }
+
+  /// Store an object from a stream of byte chunks without buffering the
+  /// whole payload in memory at once -- useful for large objects. Input
+  /// chunks are re-buffered/re-sliced to [defaultChunkSize] pieces before
+  /// publishing, matching [put]'s on-wire framing, and the SHA-256 digest
+  /// is computed incrementally as data arrives rather than over one
+  /// in-memory buffer. Like [put], any previous object stored under [name]
+  /// has its old chunks purged once the new object is safely written.
+  Future<ObjectInfo> putStream(String name, Stream<List<int>> data,
+      {String description = ''}) async {
+    final previous = await getInfo(name);
+    final nuid = Nuid().next();
+    final chunkSubject = '\$O.$bucket.C.$nuid';
+
+    final digestSink = _DigestSink();
+    final hashInput = sha256.startChunkedConversion(digestSink);
+
+    var totalSize = 0;
+    var chunkCount = 0;
+    var pending = BytesBuilder(copy: false);
+
+    Future<void> flushChunk(Uint8List chunk) async {
+      await client.pub(chunkSubject, chunk);
+      chunkCount++;
+    }
+
+    await for (final piece in data) {
+      final bytes = piece is Uint8List ? piece : Uint8List.fromList(piece);
+      if (bytes.isEmpty) continue;
+      hashInput.add(bytes);
+      totalSize += bytes.length;
+      pending.add(bytes);
+      while (pending.length >= defaultChunkSize) {
+        final buffered = pending.takeBytes();
+        await flushChunk(Uint8List.sublistView(buffered, 0, defaultChunkSize));
+        pending = BytesBuilder(copy: false);
+        if (buffered.length > defaultChunkSize) {
+          pending.add(Uint8List.sublistView(buffered, defaultChunkSize));
+        }
+      }
+    }
+    if (pending.length > 0) {
+      await flushChunk(pending.takeBytes());
+    }
+    hashInput.close();
+
+    // Ensure all chunks are flushed to the server
+    await client.flush();
+
+    final digest = 'SHA-256=${base64Url.encode(digestSink.value!.bytes)}';
+
+    final info = ObjectInfo(
+      name: name,
+      description: description,
+      bucket: bucket,
+      nuid: nuid,
+      size: totalSize,
+      mtime: DateTime.now(),
+      chunks: chunkCount,
+      digest: digest,
+    );
+
+    final encodedName = base64Url.encode(utf8.encode(name));
+    final metadataSubject = '\$O.$bucket.M.$encodedName';
+    final payload = utf8.encode(jsonEncode(info.toJson()));
+
+    await client
+        .jetStream()
+        .publish(metadataSubject, Uint8List.fromList(payload));
+
+    if (previous != null && previous.chunks > 0 && previous.nuid != nuid) {
+      await _purgeChunks(previous.nuid);
+    }
+
+    return info;
   }
 
   /// Store a string payload as an object
@@ -456,6 +554,115 @@ class ObjectStore {
     return utf8.decode(bytes);
   }
 
+  /// Retrieve an object's bytes as a stream of chunks instead of buffering
+  /// the whole payload in memory -- useful for large objects. Digest
+  /// verification still happens once every chunk has arrived; a mismatch is
+  /// surfaced as an error event on the returned stream rather than a thrown
+  /// exception, since by then earlier chunks have already been handed to
+  /// the caller. Resolves object links recursively up to 5 jumps, the same
+  /// as [get].
+  Stream<Uint8List> getStream(String name, {int depth = 0}) {
+    final controller = StreamController<Uint8List>();
+
+    Future<void> run() async {
+      if (depth > 5) {
+        controller
+            .addError(NatsException('Circular link dependency detected.'));
+        await controller.close();
+        return;
+      }
+
+      final info = await getInfo(name);
+      if (info == null || info.deleted) {
+        await controller.close();
+        return;
+      }
+
+      if (info.link != null) {
+        if (info.link!.name == null) {
+          controller
+              .addError(NatsException('Cannot get data from a bucket link.'));
+          await controller.close();
+          return;
+        }
+        final targetStore = ObjectStore(client, info.link!.bucket);
+        await controller.addStream(
+            targetStore.getStream(info.link!.name!, depth: depth + 1));
+        await controller.close();
+        return;
+      }
+
+      if (info.chunks == 0) {
+        await controller.close();
+        return;
+      }
+
+      final deliverSubject = client.inboxPrefix + '.' + Nuid().next();
+      final sub = client.sub(deliverSubject);
+
+      final consumerConfig = ConsumerConfig(
+        deliverSubject: deliverSubject,
+        filterSubject: '\$O.$bucket.C.${info.nuid}',
+        deliverPolicy: 'all',
+        ackPolicy: 'none',
+      );
+
+      var received = 0;
+      final digestSink = _DigestSink();
+      final hashInput = sha256.startChunkedConversion(digestSink);
+      final done = Completer<void>();
+      StreamSubscription? sourceSub;
+      Timer? timeoutTimer;
+
+      void cleanup() {
+        timeoutTimer?.cancel();
+        sourceSub?.cancel();
+        client.unSub(sub);
+      }
+
+      timeoutTimer = Timer(const Duration(seconds: 15), () {
+        cleanup();
+        controller
+            .addError(NatsException('Timed out retrieving object chunks.'));
+        if (!done.isCompleted) done.complete();
+      });
+
+      sourceSub = sub.stream.listen((msg) {
+        hashInput.add(msg.byte);
+        controller.add(msg.byte);
+        received++;
+        if (received >= info.chunks) {
+          cleanup();
+          hashInput.close();
+          final digest = 'SHA-256=${base64Url.encode(digestSink.value!.bytes)}';
+          if (digest != info.digest) {
+            controller
+                .addError(NatsException('SHA-256 digest verification failed.'));
+          }
+          if (!done.isCompleted) done.complete();
+        }
+      }, onError: (err) {
+        cleanup();
+        controller.addError(err);
+        if (!done.isCompleted) done.complete();
+      });
+
+      try {
+        await client.jetStream().createConsumer('OBJ_$bucket', consumerConfig);
+      } catch (e) {
+        cleanup();
+        controller.addError(e);
+        if (!done.isCompleted) done.complete();
+      }
+
+      await done.future;
+      await controller.close();
+    }
+
+    run();
+    return controller.stream;
+  }
+
   /// Delete/mark object deleted and purge its chunk history
   Future<bool> delete(String name) async {
     final info = await getInfo(name);
@@ -483,13 +690,25 @@ class ObjectStore {
         .publish(metadataSubject, Uint8List.fromList(payload));
 
     // Purge the chunks subject to reclaim NATS space
-    final purgeSubject = '\$JS.API.STREAM.PURGE.OBJ_$bucket';
-    final purgePayload = utf8.encode(jsonEncode({
-      'filter': '\$O.$bucket.C.${info.nuid}',
-    }));
-    await client.request(purgeSubject, Uint8List.fromList(purgePayload));
+    if (info.chunks > 0) {
+      await _purgeChunks(info.nuid);
+    }
 
     return true;
+  }
+
+  /// Purge a stored object's chunks (identified by its `nuid`) from the
+  /// backing stream. Used both by [delete] and by [put]/[putStream] when
+  /// overwriting an object, so a previous version's chunks don't linger
+  /// server-side once nothing references them anymore.
+  Future<void> _purgeChunks(String nuid,
+      {Duration timeout = const Duration(seconds: 2)}) async {
+    final purgeSubject = '\$JS.API.STREAM.PURGE.OBJ_$bucket';
+    final purgePayload = utf8.encode(jsonEncode({
+      'filter': '\$O.$bucket.C.$nuid',
+    }));
+    await client.request(purgeSubject, Uint8List.fromList(purgePayload),
+        timeout: timeout);
   }
 
   /// List all active objects in this Object Store bucket

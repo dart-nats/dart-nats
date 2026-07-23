@@ -636,16 +636,35 @@ class JetStream {
   /// Purge a stream (Deprecated: Use stream(streamName).purge() instead)
   @Deprecated('Use stream(streamName).purge() instead')
   Future<bool> purgeStream(String streamName,
-      {Duration timeout = const Duration(seconds: 2)}) {
-    return _purgeStream(streamName, timeout: timeout);
+      {String? filter,
+      int? keep,
+      int? seq,
+      Duration timeout = const Duration(seconds: 2)}) {
+    return _purgeStream(streamName,
+        filter: filter, keep: keep, seq: seq, timeout: timeout);
   }
 
-  /// Internal purge helper
+  /// Internal purge helper.
+  ///
+  /// [filter] limits the purge to messages on a matching subject. [keep]
+  /// retains the newest N messages (of those matching [filter], if given)
+  /// instead of purging everything. [seq] purges all messages up to but
+  /// not including that sequence number. [keep] and [seq] are mutually
+  /// exclusive per the server's own API.
   Future<bool> _purgeStream(String streamName,
-      {Duration timeout = const Duration(seconds: 2)}) async {
+      {String? filter,
+      int? keep,
+      int? seq,
+      Duration timeout = const Duration(seconds: 2)}) async {
     final subject = '\$JS.API.STREAM.PURGE.$streamName';
-    final response =
-        await client.request(subject, Uint8List.fromList([]), timeout: timeout);
+    final body = <String, dynamic>{};
+    if (filter != null) body['filter'] = filter;
+    if (keep != null) body['keep'] = keep;
+    if (seq != null) body['seq'] = seq;
+    final payload = body.isEmpty
+        ? Uint8List.fromList([])
+        : Uint8List.fromList(utf8.encode(jsonEncode(body)));
+    final response = await client.request(subject, payload, timeout: timeout);
     final map = jsonDecode(response.string);
     if (map['error'] != null) {
       throw NatsException(map['error']['description'] as String);
@@ -1274,9 +1293,18 @@ class JsStream {
     return js.streamInfo(name, timeout: timeout);
   }
 
-  /// Purge all messages from this stream
-  Future<bool> purge({Duration timeout = const Duration(seconds: 2)}) {
-    return js._purgeStream(name, timeout: timeout);
+  /// Purge messages from this stream. With no arguments, purges everything.
+  /// [filter] limits the purge to a matching subject, [keep] retains the
+  /// newest N messages instead of purging all matches, and [seq] purges
+  /// everything up to but not including that sequence number ([keep] and
+  /// [seq] are mutually exclusive per the server's own API).
+  Future<bool> purge(
+      {String? filter,
+      int? keep,
+      int? seq,
+      Duration timeout = const Duration(seconds: 2)}) {
+    return js._purgeStream(name,
+        filter: filter, keep: keep, seq: seq, timeout: timeout);
   }
 
   /// Bind to a consumer on this stream

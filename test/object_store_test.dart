@@ -206,6 +206,129 @@ void main() {
       );
     });
 
+    test('Object Store overwrite purges the previous version\'s chunks',
+        () async {
+      final os = await js.createObjectStore(
+        ObjectStoreConfig(bucket: bucket, storage: 'memory'),
+      );
+
+      final size = 150 * 1024; // 150 KiB -> 2 chunks
+      final originalData = Uint8List(size);
+      for (var i = 0; i < size; i++) {
+        originalData[i] = i % 256;
+      }
+
+      final oldInfo = await os.putBytes('overwrite-me.bin', originalData);
+      expect(oldInfo.chunks, equals(2));
+      final oldChunkSubject = '\$O.$bucket.C.${oldInfo.nuid}';
+      expect(
+          await _chunkSubjectHasMessages(
+              client, 'OBJ_$bucket', oldChunkSubject),
+          isTrue);
+
+      final newData = Uint8List.fromList(utf8.encode('replacement payload'));
+      final newInfo = await os.putBytes('overwrite-me.bin', newData);
+      expect(newInfo.nuid, isNot(equals(oldInfo.nuid)));
+
+      // The old version's chunks should be gone from the backing stream.
+      expect(
+          await _chunkSubjectHasMessages(
+              client, 'OBJ_$bucket', oldChunkSubject),
+          isFalse);
+
+      // The new version is still readable and correct.
+      final readBack = await os.getBytes('overwrite-me.bin');
+      expect(readBack, equals(newData));
+    });
+
+    test('Object Store streaming put/get (putStream/getStream)', () async {
+      final os = await js.createObjectStore(
+        ObjectStoreConfig(bucket: bucket, storage: 'memory'),
+      );
+
+      final size = 300 * 1024; // 300 KiB -> 3 chunks of up to 128 KiB
+      final originalData = Uint8List(size);
+      for (var i = 0; i < size; i++) {
+        originalData[i] = (i * 7) % 256;
+      }
+
+      // Feed putStream with small, uneven pieces to exercise re-chunking.
+      Stream<List<int>> unevenChunks() async* {
+        const pieceSize = 4096;
+        var offset = 0;
+        while (offset < originalData.length) {
+          final end = (offset + pieceSize > originalData.length)
+              ? originalData.length
+              : offset + pieceSize;
+          yield originalData.sublist(offset, end);
+          offset = end;
+        }
+      }
+
+      final info = await os.putStream('streamed.bin', unevenChunks());
+      expect(info.size, equals(size));
+      expect(info.chunks, equals(3));
+
+      final received = <int>[];
+      await for (final chunk in os.getStream('streamed.bin')) {
+        received.addAll(chunk);
+      }
+      expect(Uint8List.fromList(received), equals(originalData));
+
+      // The buffered get() path should read back the same data too.
+      final bytes = await os.getBytes('streamed.bin');
+      expect(bytes, equals(originalData));
+
+      // Overwriting a streamed-put object via putStream also purges the
+      // previous version's chunks.
+      final oldChunkSubject = '\$O.$bucket.C.${info.nuid}';
+      expect(
+          await _chunkSubjectHasMessages(
+              client, 'OBJ_$bucket', oldChunkSubject),
+          isTrue);
+
+      Stream<List<int>> replacement() async* {
+        yield utf8.encode('short replacement');
+      }
+
+      final newInfo = await os.putStream('streamed.bin', replacement());
+      expect(newInfo.nuid, isNot(equals(info.nuid)));
+      expect(
+          await _chunkSubjectHasMessages(
+              client, 'OBJ_$bucket', oldChunkSubject),
+          isFalse);
+      expect(await os.getString('streamed.bin'), equals('short replacement'));
+    });
+
+    test('Object Store getStream surfaces digest verification failure',
+        () async {
+      final store = await js.createObjectStore(
+        ObjectStoreConfig(bucket: bucket, storage: 'memory'),
+      );
+
+      final info =
+          await store.putString('corrupt-stream.txt', 'integrity test');
+
+      final purgeSubject = '\$JS.API.STREAM.PURGE.OBJ_$bucket';
+      final purgePayload = utf8.encode(jsonEncode({
+        'filter': '\$O.$bucket.C.${info.nuid}',
+      }));
+      await client.request(purgeSubject, Uint8List.fromList(purgePayload));
+
+      final chunkSubject = '\$O.$bucket.C.${info.nuid}';
+      await client.pubString(chunkSubject, 'corrupted chunk');
+      await client.flush();
+
+      expect(
+        () => store.getStream('corrupt-stream.txt').drain<void>(),
+        throwsA(isA<NatsException>().having(
+          (e) => e.message,
+          'message',
+          contains('SHA-256 digest verification failed'),
+        )),
+      );
+    });
+
     test('Object Store integrity digest validation failure', () async {
       final store = await js.createObjectStore(
         ObjectStoreConfig(bucket: bucket, storage: 'memory'),
@@ -237,4 +360,18 @@ void main() {
       );
     });
   });
+}
+
+/// Whether a direct-get last-by-subject request against [subject] on
+/// [streamName] finds any message -- used to confirm a purged chunk subject
+/// genuinely has nothing left, the same technique [ObjectStore.getInfo]
+/// itself uses to look up metadata.
+Future<bool> _chunkSubjectHasMessages(
+    Client client, String streamName, String subject) async {
+  final apiSubject = '\$JS.API.STREAM.MSG.GET.$streamName';
+  final payload = utf8.encode(jsonEncode({'last_by_subj': subject}));
+  final response =
+      await client.request(apiSubject, Uint8List.fromList(payload));
+  final map = jsonDecode(response.string);
+  return map['error'] == null;
 }
