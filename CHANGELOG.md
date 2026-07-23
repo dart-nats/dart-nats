@@ -1,3 +1,10 @@
+## 1.4.0
+
+* Add filtered/keep/seq-bounded stream purge: `JsStream.purge()`/`JetStream.purgeStream()` now accept optional `filter`, `keep`, and `seq` parameters (`$JS.API.STREAM.PURGE`'s own options), instead of only supporting an all-or-nothing purge.
+* Add `ObjectStore.putStream()`/`getStream()` for uploading/downloading objects as a `Stream<List<int>>`/`Stream<Uint8List>` without buffering the whole payload in memory, computing the SHA-256 digest incrementally as chunks arrive.
+* Fix `ObjectStore.put()`/`putStream()` leaving a previous object's chunks orphaned in the backing stream when overwriting an existing name -- the old version's chunks are now purged once the new version is safely written.
+* Bump `actions/checkout`/`actions/cache` in CI to versions that don't trigger GitHub's Node 20 deprecation warning.
+
 ## 1.3.0
 
 * Add consumer pause/resume support (NATS 2.11+): `JetStream.pauseConsumer(stream, consumer, pauseUntil)` and `JetStream.resumeConsumer(stream, consumer)`, calling `$JS.API.CONSUMER.PAUSE`. `ConsumerInfo` also gains `paused`/`pauseUntil` fields reflecting the consumer's current pause state.
