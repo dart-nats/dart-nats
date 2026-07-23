@@ -94,6 +94,50 @@ void main() {
       expect(deleteResult, isTrue);
     });
 
+    test('Stream Purge with filter/keep/seq options', () async {
+      final streamName = 'purge-opts-test';
+      final subjectA = 'purge.opts.a';
+      final subjectB = 'purge.opts.b';
+
+      final stream = await js.createStream(StreamConfig(
+        name: streamName,
+        subjects: ['purge.opts.*'],
+        storage: 'memory',
+      ));
+
+      // 1. filter: purge only messages on a matching subject
+      await js.publishString(subjectA, 'a1');
+      await js.publishString(subjectA, 'a2');
+      await js.publishString(subjectB, 'b1');
+
+      await stream.purge(filter: subjectA);
+      var info = await stream.info();
+      expect(info.state.messages, equals(1));
+      expect((await js.getLastMsg(streamName, subjectB)).string, equals('b1'));
+
+      // 2. keep: retain only the newest N messages overall
+      await js.publishString(subjectB, 'b2');
+      await js.publishString(subjectB, 'b3');
+      info = await stream.info();
+      expect(info.state.messages, equals(3));
+
+      await stream.purge(keep: 1);
+      info = await stream.info();
+      expect(info.state.messages, equals(1));
+      expect((await js.getLastMsg(streamName, subjectB)).string, equals('b3'));
+
+      // 3. seq: purge everything up to but not including a sequence number
+      await js.publishString(subjectB, 'b4');
+      final ack5 = await js.publishString(subjectB, 'b5');
+
+      await stream.purge(seq: ack5.sequence);
+      info = await stream.info();
+      expect(info.state.messages, equals(1));
+      expect((await js.getLastMsg(streamName, subjectB)).string, equals('b5'));
+
+      await js.deleteStream(streamName);
+    });
+
     test('Publishing and Message Get APIs', () async {
       final streamName = 'pub-get-test';
       final subject = 'pub.get.subj';
