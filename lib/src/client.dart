@@ -1315,7 +1315,16 @@ class Client {
         // ping counter. Without this, _pingsOut only ever increases and the
         // heartbeat unconditionally disconnects after maxPingsOut ticks
         // regardless of whether the server is actually responding.
-        completer.future.then((_) => _pingsOut = 0, onError: (_) {});
+        //
+        // The value callback needs a block body: as an expression body it
+        // evaluates to the assigned int, so inference picks `then<int>` and the
+        // null-returning onError handler cannot satisfy `FutureOr<int>`. These
+        // completers are error-completed on every disconnect, and nothing
+        // awaits this future, so that mismatch surfaced as an unhandled zone
+        // error on the Dart VM and dart2wasm (dart2js elides the cast).
+        completer.future.then((_) {
+          _pingsOut = 0;
+        }, onError: (_) {});
         _add('ping');
       });
       if (_reconnectCycle && onReconnect != null) {
