@@ -14,6 +14,10 @@ abstract class Socket extends Stream<Uint8List> {
   /// Adds data to the socket stream
   void add(List<int> data);
 
+  /// Completes when the sink is done, or with an error when a write failed. Declared here because a
+  /// failed [add] reports nowhere else - it does not throw.
+  Future<dynamic> get done;
+
   /// Closes the socket connection
   Future<void> close();
 }
@@ -29,6 +33,10 @@ abstract class SecureSocket extends Stream<Uint8List> {
 
   /// Adds data to the secure socket stream
   void add(List<int> data);
+
+  /// Completes when the sink is done, or with an error when a write failed. Declared here because a
+  /// failed [add] reports nowhere else - it does not throw.
+  Future<dynamic> get done;
 
   /// Closes the secure socket connection
   Future<void> close();

@@ -20,6 +20,9 @@ class Socket extends Stream<Uint8List> {
   /// Adds data to the socket stream
   void add(List<int> data) {}
 
+  /// Never reached: [connect] throws, so no instance of this exists on the web.
+  Future<dynamic> get done => Future<dynamic>.value();
+
   /// Closes the socket connection
   Future<void> close() async {}
 }
@@ -40,6 +43,9 @@ class SecureSocket extends Stream<Uint8List> {
 
   /// Adds data to the secure socket stream
   void add(List<int> data) {}
+
+  /// Never reached: [secure] throws, so no instance of this exists on the web.
+  Future<dynamic> get done => Future<dynamic>.value();
 
   /// Closes the secure socket connection
   Future<void> close() async {}

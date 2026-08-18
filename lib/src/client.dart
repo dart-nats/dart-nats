@@ -623,6 +623,7 @@ class Client {
             if (currentSocket != _tcpSocket) return;
             _setStatus(Status.disconnected);
           });
+          _watchSinkDone(_tcpSocket!.done, () => currentSocket == _tcpSocket);
           return true;
 
         case 'tls':
@@ -655,6 +656,7 @@ class Client {
             if (currentSocket != _tcpSocket) return;
             _setStatus(Status.disconnected);
           });
+          _watchSinkDone(_tcpSocket!.done, () => currentSocket == _tcpSocket);
           return true;
 
         default:
@@ -663,6 +665,30 @@ class Client {
     } catch (e) {
       rethrow;
     }
+  }
+
+  /// Give a failed WRITE the same handling a failed read already gets.
+  ///
+  /// A [Socket] is an [IOSink], so `add()` does not throw when the write fails - the failure completes
+  /// `done` instead. Nothing was watching `done`, so a write landing on a socket the peer has already
+  /// aborted had no handler anywhere and surfaced as an unhandled asynchronous error. The status guard
+  /// at the top of [_add] does not prevent it: the keepalive writes on its own timer, and the socket
+  /// can be gone while [status] still reads connected.
+  ///
+  /// [isCurrent] is tested for the same reason the stream listeners test it - a reconnect replaces the
+  /// transport, and a failure from the one it replaced must not disturb the new connection.
+  ///
+  /// The callback takes a block body deliberately: an expression body would make this `catchError<T>`
+  /// over the sink's own type and reintroduce the return-type mismatch fixed in #49.
+  void _watchSinkDone(Future<dynamic> done, bool Function() isCurrent) {
+    unawaited(done.catchError((dynamic e) {
+      if (!isCurrent()) return null;
+      if (onError != null) {
+        onError!(e);
+      }
+      _setStatus(Status.disconnected);
+      return null;
+    }));
   }
 
   void _backendSubscriptAll() {
@@ -773,6 +799,8 @@ class Client {
                 if (secureSocket != _secureSocket) return;
                 _setStatus(Status.disconnected);
               });
+              _watchSinkDone(
+                  secureSocket.done, () => secureSocket == _secureSocket);
             } catch (e) {
               _setStatus(Status.disconnected);
               rethrow;
