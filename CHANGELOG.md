@@ -1,3 +1,7 @@
+## 1.4.1
+
+* Fix heartbeat pings raising an unhandled zone error on every disconnect. The PONG-tracking callback added in 1.3.0 used an expression body, so type inference picked `then<int>` and the null-returning `onError` handler could not satisfy `FutureOr<int>` -- visible on the Dart VM and dart2wasm (dart2js elides the cast).
+
 ## 1.4.0
 
 * Add filtered/keep/seq-bounded stream purge: `JsStream.purge()`/`JetStream.purgeStream()` now accept optional `filter`, `keep`, and `seq` parameters (`$JS.API.STREAM.PURGE`'s own options), instead of only supporting an all-or-nothing purge.
