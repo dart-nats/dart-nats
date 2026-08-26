@@ -23,9 +23,9 @@ class _AbortOnWriteSocket extends Stream<Uint8List> implements Socket {
     // the point of this test would never be attempted.
     Timer(const Duration(milliseconds: 20), () {
       if (_incoming.isClosed) return;
-      _incoming.add(Uint8List.fromList(utf8.encode(
-          'INFO {"server_id":"test","version":"2.10.0","proto":1,'
-          '"host":"127.0.0.1","port":4222,"max_payload":1048576}\r\n')));
+      _incoming.add(Uint8List.fromList(
+          utf8.encode('INFO {"server_id":"test","version":"2.10.0","proto":1,'
+              '"host":"127.0.0.1","port":4222,"max_payload":1048576}\r\n')));
     });
     return _incoming.stream.listen(onData,
         onError: onError, onDone: onDone, cancelOnError: cancelOnError);
@@ -50,8 +50,7 @@ class _AbortOnWriteSocket extends Stream<Uint8List> implements Socket {
   void destroy() {}
 
   @override
-  dynamic noSuchMethod(Invocation invocation) =>
-      super.noSuchMethod(invocation);
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 void main() {
