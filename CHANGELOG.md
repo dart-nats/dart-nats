@@ -1,3 +1,8 @@
+## 1.4.2
+
+* Fix a failed socket write escaping as an unhandled zone error when the peer aborts the connection. `Socket` is an `IOSink`, so `add()` reports a write failure asynchronously on `done` instead of throwing -- the `try`/`catch` around the write never saw it and nothing was listening for it, so a keepalive ping landing on an already-aborted socket had no handler anywhere. Write failures now take the same path a read error does, `onError` followed by a `disconnected` status, on the `nats:`, `tls:`, and secure transports. On `tls://` such a failure previously reached the application as nothing at all beyond a bare status change.
+* Many thanks to contributor [@amalic](https://github.com/amalic) for reporting and fixing this.
+
 ## 1.4.1
 
 * Fix heartbeat pings raising an unhandled zone error on every disconnect. The PONG-tracking callback added in 1.3.0 used an expression body, so type inference picked `then<int>` and the null-returning `onError` handler could not satisfy `FutureOr<int>` -- visible on the Dart VM and dart2wasm (dart2js elides the cast).
