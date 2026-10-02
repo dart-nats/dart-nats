@@ -187,6 +187,28 @@ class Client {
   int _connectionId = 0;
   bool _connectOptionSent = false;
 
+  /// The connect attempt in flight. It completes once the attempt reaches
+  /// [Status.connected], or with the error that ended it: an open socket is
+  /// not a connection yet, since TLS, CONNECT and the first PONG can all still
+  /// fail. Only [_connectUri] creates it, and it is always awaited there.
+  Completer<void>? _handshake;
+
+  bool get _handshakePending => _handshake?.isCompleted == false;
+
+  void _failHandshake(Object error) {
+    final handshake = _handshake;
+    if (handshake == null || handshake.isCompleted) return;
+    handshake.completeError(error);
+    // A PING sent during the failed attempt must not be matched with the
+    // PONG of the next one.
+    while (_pingCompleters.isNotEmpty) {
+      final completer = _pingCompleters.removeAt(0);
+      if (!completer.isCompleted) {
+        completer.completeError(error);
+      }
+    }
+  }
+
   Uint8List _buffer = Uint8List(0);
   int _bufferLength = 0;
   int _readOffset = 0;
@@ -494,6 +516,7 @@ class Client {
     required int retryCount,
   }) async {
     int attempts = 0;
+    Object? lastError;
     final maxAttempts = _retry
         ? (retryCount == -1 ? -1 : retryCount * _serverPool.length)
         : _serverPool.length;
@@ -522,12 +545,15 @@ class Client {
           break;
         }
 
-        _buffer = Uint8List(0);
-        _bufferLength = 0;
-        _readOffset = 0;
+        if (!_connectCompleter.isCompleted) {
+          _connectCompleter.complete();
+        }
         return;
       } catch (err, st) {
-        await _cleanUpSockets();
+        await _cleanUpSocketsSoft();
+        // Closed by the user, or by a fatal -ERR such as an auth violation.
+        if (status == Status.closed) break;
+        lastError = err;
         if (onError != null) {
           onError!(err);
         }
@@ -550,8 +576,9 @@ class Client {
 
     if (!_connectCompleter.isCompleted) {
       _clientStatus = _ClientStatus.closed;
-      _connectCompleter.completeError(
-          NatsException('can not connect to any servers in the pool'));
+      _connectCompleter.completeError(NatsException(
+          'can not connect to any servers in the pool' +
+              (lastError == null ? '' : ': $lastError')));
     }
   }
 
@@ -560,6 +587,9 @@ class Client {
     // stale _secureSocket left behind by a server-side close makes the new
     // TCP listener drop INFO, so the TLS upgrade never starts (#55).
     await _cleanUpSocketsSoft();
+    _buffer = Uint8List(0);
+    _bufferLength = 0;
+    _readOffset = 0;
     _connectOptionSent = false;
     try {
       if (uri.scheme == '') {
@@ -596,7 +626,7 @@ class Client {
             close();
             wsErrorHandler(e);
           });
-          return true;
+          break;
 
         case 'nats':
           var port = uri.port;
@@ -631,7 +661,7 @@ class Client {
             _setStatus(Status.disconnected);
           });
           _watchSinkDone(_tcpSocket!.done, () => currentSocket == _tcpSocket);
-          return true;
+          break;
 
         case 'tls':
           var port = uri.port;
@@ -664,11 +694,26 @@ class Client {
             _setStatus(Status.disconnected);
           });
           _watchSinkDone(_tcpSocket!.done, () => currentSocket == _tcpSocket);
-          return true;
+          break;
 
         default:
           throw Exception(NatsException('schema ${uri.scheme} not support'));
       }
+
+      // The transport is up. The attempt succeeds only when the handshake
+      // driven by INFO in _processOp gets through; a failure there throws
+      // here, so the calling loop counts it and waits retryInterval like any
+      // other failed attempt (#56).
+      final handshake = _handshake = Completer<void>();
+      try {
+        await handshake.future.timeout(Duration(seconds: timeout));
+      } on TimeoutException {
+        final e = NatsException('no handshake with ${uri.host}:${uri.port} '
+            'within ${timeout}s');
+        _failHandshake(e);
+        throw e;
+      }
+      return true;
     } catch (e) {
       rethrow;
     }
@@ -744,6 +789,13 @@ class Client {
         break;
 
       case 'info':
+        // This attempt's handshake. A later await can resume after the
+        // attempt already failed or timed out; it must then not touch the
+        // next attempt's connection.
+        final handshake = _handshake;
+        bool stale() =>
+            handshake != null &&
+            (handshake.isCompleted || !identical(handshake, _handshake));
         try {
           _info = Info.fromJson(jsonDecode(data) as Map<String, dynamic>);
 
@@ -782,6 +834,14 @@ class Client {
                   return acceptBadCert;
                 },
               );
+              if (stale()) {
+                unawaited(Future<void>(() async {
+                  try {
+                    await secureSocket.close();
+                  } catch (_) {}
+                }));
+                return;
+              }
 
               _secureSocket = secureSocket;
               final connId = _connectionId;
@@ -795,41 +855,37 @@ class Client {
                 if (onError != null) {
                   onError!(error);
                 }
-
-                // No throw here: an exception from a stream error handler has
-                // no caller to reach and always escapes as an unhandled zone
-                // error. onError above already reported it.
-                if (error is TlsException) {
-                  _retry = false;
-                  close();
-                }
               }, onDone: () {
                 if (secureSocket != _secureSocket) return;
                 _setStatus(Status.disconnected);
               });
               _watchSinkDone(
                   secureSocket.done, () => secureSocket == _secureSocket);
-            } catch (e) {
-              _setStatus(Status.disconnected);
-              rethrow;
+            } on TlsException catch (e) {
+              throw NatsException('TLS handshake failed: $e');
             }
           }
 
           await _sign();
+          if (stale()) return;
           _addConnectOption(_connectOption);
 
           if (_connectOption.verbose == true) {
             final ack = await _ackStream.stream.first;
-            if (ack) {
-              _setStatus(Status.connected);
-            } else {
-              _setStatus(Status.disconnected);
+            if (stale()) return;
+            if (!ack) {
               throw NatsException('Verbose connection failed');
             }
           } else {
             await ping();
-            _setStatus(Status.connected);
+            if (stale()) return;
           }
+          // Before the status change: a callback it fires may close the
+          // client, and that must not count as a failed attempt.
+          if (handshake != null && !handshake.isCompleted) {
+            handshake.complete();
+          }
+          _setStatus(Status.connected);
 
           _backendSubscriptAll();
           _flushPubBuffer();
@@ -838,9 +894,8 @@ class Client {
             _connectCompleter.complete();
           }
         } catch (e) {
-          if (!_connectCompleter.isCompleted) {
-            _connectCompleter.completeError(e);
-          }
+          // The loop that owns this attempt retries it or reports the error.
+          if (!stale()) _failHandshake(e);
         }
         break;
 
@@ -858,7 +913,14 @@ class Client {
         if (onError != null) {
           onError!(exception);
         }
-        if (!_connectCompleter.isCompleted) {
+        final authFailed =
+            data.toLowerCase().contains('authorization violation') ||
+                data.toLowerCase().contains('authentication');
+        if (_handshakePending && !authFailed) {
+          // e.g. "maximum connections exceeded": a failed attempt, which the
+          // connect loop retries.
+          _failHandshake(exception);
+        } else if (!_connectCompleter.isCompleted) {
           _connectCompleter.completeError(exception);
         }
         while (_pingCompleters.isNotEmpty) {
@@ -867,8 +929,7 @@ class Client {
             completer.completeError(exception);
           }
         }
-        if (data.toLowerCase().contains('authorization violation') ||
-            data.toLowerCase().contains('authentication')) {
+        if (authFailed) {
           _retry = false;
           close();
         }
@@ -1314,8 +1375,16 @@ class Client {
     if (_status == Status.closed && newStatus != Status.connecting) {
       return;
     }
+    if (newStatus == Status.disconnected && _handshakePending) {
+      // Not a disconnect: the connection was never established. The loop
+      // running this attempt retries it, so no onDisconnect, no completed
+      // connect future and no second reconnect loop.
+      _failHandshake(NatsException('connection closed during handshake'));
+      return;
+    }
     if (newStatus == Status.disconnected || newStatus == Status.closed) {
       final exception = NatsException('Connection closed or disconnected');
+      _failHandshake(exception);
       if (!_connectCompleter.isCompleted) {
         _connectCompleter.completeError(exception);
       }
@@ -1415,9 +1484,6 @@ class Client {
         final success =
             await _connectUri(currentUri, timeout: _reconnectTimeout);
         if (success) {
-          _buffer = Uint8List(0);
-          _bufferLength = 0;
-          _readOffset = 0;
           _reconnecting = false;
           return;
         }
