@@ -5,6 +5,7 @@ test/go.sum
 build/
 doc/api/
 *.pem
+!test/certs/*.pem
 *.iml
 *.idea/
 .DS_Store
