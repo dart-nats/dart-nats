@@ -4,6 +4,11 @@ version: 1.4.3
 homepage: https://github.com/dart-nats
 repository: https://github.com/dart-nats/dart-nats
 
+# Self-signed, test-only key for the in-process fake server used by the
+# test/defect regression tests. Not a secret.
+false_secrets:
+  - /test/certs/server-key.pem
+
 environment:
   sdk: '>=2.15.0 <4.0.0'
 
