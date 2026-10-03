@@ -1,3 +1,16 @@
+## 1.5.0
+
+* A connect attempt now counts as successful only once the handshake completes (TLS upgrade, CONNECT and the first PONG), not as soon as the TCP or WebSocket connection is open ([#56](https://github.com/dart-nats/dart-nats/issues/56)). Previously, a failure after the socket opened (a TLS certificate that does not verify, `-ERR` such as `maximum connections exceeded`, a server closing the connection or never sending INFO):
+  * was not retried on the first connect, even with `retry: true`, and `connect()` failed with a generic `Connection closed or disconnected` error;
+  * after a reconnect, started the next attempt immediately, ignoring `retryInterval` and `retryCount`. Against a server whose certificate fails verification this meant thousands of connections per second.
+
+  Such failures are now ordinary failed attempts: reported through `onError` with the real cause, counted toward `retryCount` and spaced by `retryInterval`. `connect(timeout: ...)` now also bounds the handshake, so a server that accepts the connection but never sends INFO no longer hangs the client.
+* **Behavior changes:**
+  * With `retry: true`, `connect()` keeps retrying through handshake failures instead of failing on the first one. With `retryCount: -1` it waits until a connection succeeds.
+  * A connection that drops during the handshake no longer emits `Status.disconnected` or calls `onDisconnect`; the attempt is retried instead.
+  * A TLS error on an established connection is now an ordinary disconnect and is retried, instead of closing the client and turning off retries. Authorization violations still close the client.
+* Many thanks to contributor [@amalic](https://github.com/amalic) for the detailed report.
+
 ## 1.4.3
 
 * Fix a `tls://` client never reconnecting after the server closed an established connection, for example on a nats-server restart ([#55](https://github.com/dart-nats/dart-nats/issues/55)). The client kept a reference to the dead secure socket, and the next attempt's TCP listener only forwards data while there is none, so the new server's INFO was dropped and the TLS upgrade never started. The client looped through TCP connects that the server closed with `TLS Handshake Failure`. Every connect attempt now starts with no references to the previous connection. This also affects `nats://` connections to a server that requires TLS.

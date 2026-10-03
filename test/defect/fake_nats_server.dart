@@ -7,10 +7,17 @@ import 'dart:io';
 /// TLS the way nats-server does (INFO first, then the handshake), and answers
 /// PING with PONG.
 class FakeNatsServer {
-  FakeNatsServer({this.tls = false});
+  FakeNatsServer({this.tls = false, this.sendInfo = true, this.errOnAccept});
 
   /// Advertise `tls_required` in INFO and upgrade every connection.
   final bool tls;
+
+  /// When false, accept the TCP connection and then say nothing.
+  final bool sendInfo;
+
+  /// When set, answer every connection with `-ERR '<errOnAccept>'` after
+  /// INFO and close it, like nats-server rejecting a client.
+  final String? errOnAccept;
 
   // Self-signed, test-only (CN=localhost, SAN 127.0.0.1), valid for 100 years.
   // Committed on purpose, unlike the generated certs in test/config.
@@ -27,6 +34,9 @@ class FakeNatsServer {
   /// TLS handshakes that completed since start (or the last [resetCounters]).
   int tlsHandshakes = 0;
 
+  /// When each TCP connection was accepted.
+  final acceptTimes = <DateTime>[];
+
   int get port => _server!.port;
 
   Future<void> start([int port = 0]) async {
@@ -38,6 +48,7 @@ class FakeNatsServer {
   void resetCounters() {
     tcpAccepted = 0;
     tlsHandshakes = 0;
+    acceptTimes.clear();
   }
 
   /// Drop every connection and stop listening, like a nats-server shutdown.
@@ -59,8 +70,20 @@ class FakeNatsServer {
 
   Future<void> _accept(Socket socket) async {
     tcpAccepted++;
+    acceptTimes.add(DateTime.now());
+    if (!sendInfo) {
+      _sockets.add(socket);
+      socket.listen((_) {}, onError: (dynamic _) {}, onDone: () {});
+      return;
+    }
     socket.add(utf8.encode('INFO {"server_id":"fake","version":"2.10.0",'
         '"proto":1,"max_payload":1048576,"tls_required":$tls}\r\n'));
+    if (errOnAccept != null) {
+      socket.add(utf8.encode("-ERR '$errOnAccept'\r\n"));
+      await socket.flush();
+      socket.destroy();
+      return;
+    }
     Socket conn = socket;
     if (tls) {
       try {
@@ -121,5 +144,30 @@ class TcpProxy {
       s.destroy();
     }
     await _server.close();
+  }
+}
+
+/// Runs [body] in a guarded zone and fails the test if [body] fails or if
+/// any error escapes to the zone unhandled.
+Future<void> expectNoEscape(Future<void> Function() body) async {
+  Object? escaped;
+  Object? failure;
+  StackTrace? failureStack;
+  await runZonedGuarded(() async {
+    try {
+      await body();
+    } catch (e, st) {
+      // Errors stay in this zone; carry them out to fail the test.
+      failure = e;
+      failureStack = st;
+    }
+  }, (error, stack) {
+    escaped ??= error;
+  });
+  if (failure != null) {
+    return Future<void>.error(failure!, failureStack);
+  }
+  if (escaped != null) {
+    throw StateError('escaped to the zone: $escaped');
   }
 }

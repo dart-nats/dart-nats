@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 
 import 'package:dart_nats/dart_nats.dart';
@@ -8,9 +7,11 @@ import 'fake_nats_server.dart';
 
 /// The secure socket's error handler used to rethrow a TlsException. An
 /// exception thrown from a stream error handler has no caller to reach, so it
-/// always escaped as an unhandled zone error.
+/// always escaped as an unhandled zone error. Since #56 such an error is an
+/// ordinary disconnect, retried like any other.
 void main() {
-  test('a TLS error on an established connection does not escape', () async {
+  test('a TLS error on an established connection is reported and retried',
+      () async {
     final server = FakeNatsServer(tls: true);
     await server.start();
     final proxy = TcpProxy(server.port);
@@ -19,11 +20,9 @@ void main() {
     final client = Client()..acceptBadCert = true;
     final reported = <Object>[];
     client.onError = (dynamic e) => reported.add(e as Object);
-    Object? escaped;
-    Object? failure;
 
-    await runZonedGuarded(() async {
-      try {
+    try {
+      await expectNoEscape(() async {
         await client.connect(
           Uri.parse('tls://127.0.0.1:${proxy.port}'),
           retry: true,
@@ -33,28 +32,20 @@ void main() {
         );
         expect(client.status, Status.connected);
 
+        final dropped =
+            client.statusStream.firstWhere((s) => s == Status.disconnected);
         // Not a valid TLS record: the client's SecureSocket fails to decode it.
         proxy.inject(List<int>.filled(64, 0x17));
-        await client
-            .waitUntil(Status.closed)
-            .timeout(const Duration(seconds: 5));
-        await Future<void>.delayed(const Duration(milliseconds: 200));
-      } catch (e) {
-        // Errors stay in this zone; carry them out to fail the test.
-        failure = e;
-      }
-    }, (error, stack) {
-      escaped ??= error;
-    });
+        await dropped.timeout(const Duration(seconds: 5));
+        await client.waitUntilConnected().timeout(const Duration(seconds: 10));
+      });
+    } finally {
+      await client.forceClose();
+      await proxy.stop();
+      await server.stop();
+    }
 
-    await client.forceClose();
-    await proxy.stop();
-    await server.stop();
-
-    if (failure != null) fail('$failure');
-    expect(escaped, isNull, reason: 'escaped to the zone: $escaped');
     expect(reported.whereType<TlsException>(), isNotEmpty,
         reason: 'onError got: $reported');
-    expect(client.status, Status.closed);
   });
 }
