@@ -117,6 +117,16 @@ class Client {
   /// User authentication callbacks
   String Function()? userJwtHandler;
 
+  /// Supplies the auth token for each connection attempt -- the first
+  /// connect and every reconnect -- replacing [ConnectOption.authToken].
+  ///
+  /// For tokens that expire: a reconnect that sent the token captured at
+  /// [connect] would present a stale one. May be asynchronous, since a fresh
+  /// token usually comes from a network call. If it throws, the attempt
+  /// fails like any other: reported through [onError] and retried per the
+  /// `retry` settings.
+  FutureOr<String> Function()? authTokenHandler;
+
   /// Callback to sign a challenge nonce during NKEY authentication
   Uint8List Function(Uint8List nonce)? signatureHandler;
 
@@ -283,6 +293,9 @@ class Client {
   Future<void> _sign() async {
     if (userJwtHandler != null) {
       _connectOption.jwt = userJwtHandler!();
+    }
+    if (authTokenHandler != null) {
+      _connectOption.authToken = await authTokenHandler!();
     }
     if (_info.nonce != null) {
       if (signatureHandler != null) {
