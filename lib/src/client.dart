@@ -65,6 +65,14 @@ class _PendingRequest {
   _PendingRequest(this.subject);
 }
 
+/// A request that gave up waiting: what it asked, and when it gave up.
+class _AbandonedRequest {
+  final String subject;
+  final DateTime at;
+
+  _AbandonedRequest(this.subject, this.at);
+}
+
 /// NATS client implementation
 class Client {
   final _ackStream = StreamController<bool>.broadcast();
@@ -96,6 +104,15 @@ class Client {
 
   /// Callback when the client is closed
   void Function()? onClose;
+
+  /// Callback when the reply to a request arrives after that request timed
+  /// out: the request's subject, and how long after the timeout the reply
+  /// came. It tells "the reply was late" from "the reply never came", which
+  /// a [TimeoutException] alone cannot. The late reply itself is dropped.
+  ///
+  /// Only the most recent timed-out requests are remembered, and none at
+  /// all while this is null.
+  void Function(String subject, Duration lateBy)? onLateReply;
 
   /// User authentication callbacks
   String Function()? userJwtHandler;
@@ -1283,9 +1300,22 @@ class Client {
   /// up another.
   final _pendingRequests = <String, _PendingRequest>{};
 
+  /// Requests that timed out, by reply inbox, oldest first -- kept only so
+  /// a reply that turns up afterwards can be named to [onLateReply].
+  final _abandonedRequests = <String, _AbandonedRequest>{};
+  static const _abandonedRequestsKept = 32;
+
   void _onInboxMessage(Message<dynamic> msg) {
     final pending = _pendingRequests[msg.subject];
-    if (pending == null || pending.completer.isCompleted) return;
+    if (pending == null) {
+      final abandoned = _abandonedRequests.remove(msg.subject);
+      if (abandoned != null && onLateReply != null) {
+        onLateReply!(
+            abandoned.subject, DateTime.now().difference(abandoned.at));
+      }
+      return;
+    }
+    if (pending.completer.isCompleted) return;
     if (msg.header?.status == 503 && msg.byte.isEmpty) {
       // The server's own answer on a no_responders connection.
       pending.completer
@@ -1351,6 +1381,12 @@ class Client {
       }
       resp = await pending.completer.future.timeout(timeout);
     } on TimeoutException {
+      if (onLateReply != null) {
+        _abandonedRequests[inbox] = _AbandonedRequest(subj, DateTime.now());
+        while (_abandonedRequests.length > _abandonedRequestsKept) {
+          _abandonedRequests.remove(_abandonedRequests.keys.first);
+        }
+      }
       throw TimeoutException('request time > $timeout');
     } finally {
       _pendingRequests.remove(inbox);
@@ -1639,6 +1675,7 @@ class Client {
 
     await _inboxListen?.cancel();
     _inboxListen = null;
+    _abandonedRequests.clear();
     final inboxSub = _inboxSub;
     if (inboxSub != null) {
       _subs.remove(inboxSub.sid);
