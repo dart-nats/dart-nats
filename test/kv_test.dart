@@ -83,7 +83,7 @@ void main() {
       expect(rev1, isPositive);
 
       // Creating again should throw error
-      expect(
+      await expectLater(
         () => kv.create('key-atomic', Uint8List.fromList([30])),
         throwsA(isA<NatsException>()),
       );
@@ -92,7 +92,7 @@ void main() {
       final rev2 = await kv.createString('key-atomic-str', 'atomic-string');
       expect(rev2, isPositive);
 
-      expect(
+      await expectLater(
         () => kv.createString('key-atomic-str', 'another'),
         throwsA(isA<NatsException>()),
       );
@@ -106,7 +106,7 @@ void main() {
       expect(rev3, isPositive);
 
       // Updating with stale revision should throw
-      expect(
+      await expectLater(
         () => kv.update('key-atomic', Uint8List.fromList([99]), rev1),
         throwsA(isA<NatsException>()),
       );
@@ -116,7 +116,7 @@ void main() {
           'key-atomic-str', 'updated-atomic-string', rev2);
       expect(rev4, isPositive);
 
-      expect(
+      await expectLater(
         () => kv.updateString('key-atomic-str', 'stale', rev2),
         throwsA(isA<NatsException>()),
       );
