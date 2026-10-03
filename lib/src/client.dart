@@ -196,7 +196,15 @@ class Client {
 
   /// Maximum outstanding heartbeat pings allowed before reconnecting
   int maxPingsOut = 2;
+
+  /// How long a heartbeat PING may go unanswered before it counts against
+  /// [maxPingsOut] right away. Null (the default) leaves the check to the
+  /// next heartbeat tick, so a dead connection is noticed up to
+  /// `(maxPingsOut + 1) * pingInterval` after it died; with a timeout that
+  /// becomes `maxPingsOut * pingInterval + pingTimeout`.
+  Duration? pingTimeout;
   Timer? _pingTimer;
+  Timer? _pingDeadline;
   int _pingsOut = 0;
 
   /// Maximum number of messages to buffer during reconnection
@@ -501,6 +509,7 @@ class Client {
     SecurityContext? securityContext,
     Duration pingInterval = const Duration(seconds: 120),
     int maxPingsOut = 2,
+    Duration? pingTimeout,
     bool randomizeServers = true,
     int maxReconnectBuffer = 1000,
   }) async {
@@ -524,6 +533,7 @@ class Client {
     this.securityContext = securityContext;
     this.pingInterval = pingInterval;
     this.maxPingsOut = maxPingsOut;
+    this.pingTimeout = pingTimeout;
     this.maxReconnectBuffer = maxReconnectBuffer;
     _reconnectTimeout = timeout;
     _reconnectInterval = retryInterval;
@@ -1082,12 +1092,22 @@ class Client {
   /// Get server maximum payload size configuration
   int? maxPayload() => _info.maxPayload;
 
-  /// Send PING request and wait for PONG
-  Future<void> ping() {
+  /// Send PING request and wait for PONG.
+  ///
+  /// With [timeout], fails with a [TimeoutException] when no PONG arrives in
+  /// time -- a bounded check that the connection is still alive, for example
+  /// when an app returns to the foreground. Without it, a PING into a
+  /// connection that has silently died completes only when the client
+  /// notices the disconnect.
+  Future<void> ping({Duration? timeout}) {
     final completer = Completer<void>();
     _pingCompleters.add(completer);
     _add('ping');
-    return completer.future;
+    if (timeout == null) {
+      return completer.future;
+    }
+    // The completer stays queued: PONGs are matched to PINGs in order.
+    return completer.future.timeout(timeout);
   }
 
   void _addConnectOption(ConnectOption c) {
@@ -1517,6 +1537,7 @@ class Client {
       _wasConnected = true;
       _pingsOut = 0;
       _pingTimer?.cancel();
+      _pingDeadline?.cancel();
       _pingTimer = Timer.periodic(pingInterval, (timer) {
         if (status != Status.connected) {
           timer.cancel();
@@ -1546,6 +1567,18 @@ class Client {
           _pingsOut = 0;
         }, onError: (_) {});
         _add('ping');
+        final deadline = pingTimeout;
+        if (deadline != null) {
+          _pingDeadline?.cancel();
+          _pingDeadline = Timer(deadline, () {
+            if (completer.isCompleted || status != Status.connected) return;
+            if (_pingsOut >= maxPingsOut) {
+              timer.cancel();
+              _setStatus(Status.disconnected);
+              _cleanUpSockets();
+            }
+          });
+        }
       });
       if (_reconnectCycle && onReconnect != null) {
         onReconnect!();
@@ -1556,6 +1589,8 @@ class Client {
     } else if (newStatus == Status.disconnected) {
       _pingTimer?.cancel();
       _pingTimer = null;
+      _pingDeadline?.cancel();
+      _pingDeadline = null;
       _pingsOut = 0;
       if (onDisconnect != null) {
         onDisconnect!();
@@ -1569,6 +1604,8 @@ class Client {
       _reconnecting = false;
       _pingTimer?.cancel();
       _pingTimer = null;
+      _pingDeadline?.cancel();
+      _pingDeadline = null;
       _pingsOut = 0;
       if (onClose != null) {
         onClose!();
