@@ -149,7 +149,7 @@ void main() {
         expect(bucketLinkInfo.link!.name, isNull);
 
         // 5. Trying to resolve data on a bucket link should throw
-        expect(
+        await expectLater(
           () => destStore.get('link-to-bucket'),
           throwsA(isA<NatsException>().having(
             (e) => e.message,
@@ -196,7 +196,7 @@ void main() {
       await store.addLink('link3', info1!);
 
       // Trying to get 'link1' should throw circular reference
-      expect(
+      await expectLater(
         () => store.get('link1'),
         throwsA(isA<NatsException>().having(
           (e) => e.message,
@@ -319,7 +319,7 @@ void main() {
       await client.pubString(chunkSubject, 'corrupted chunk');
       await client.flush();
 
-      expect(
+      await expectLater(
         () => store.getStream('corrupt-stream.txt').drain<void>(),
         throwsA(isA<NatsException>().having(
           (e) => e.message,
@@ -350,7 +350,7 @@ void main() {
       await client.flush();
 
       // 4. Trying to get the object should throw digest verification failure
-      expect(
+      await expectLater(
         () => store.getString('corrupt-me.txt'),
         throwsA(isA<NatsException>().having(
           (e) => e.message,
