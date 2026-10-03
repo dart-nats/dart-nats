@@ -9,6 +9,7 @@
 * `connect(timeout: ...)` now bounds the WebSocket open on `ws://` and `wss://`. A peer that accepted the connection and never completed the upgrade used to hang the attempt for good.
 * Add `ping(timeout: ...)`, which fails with a `TimeoutException` when no PONG arrives in time, and `connect(pingTimeout: ...)`, which counts an unanswered heartbeat PING at its own deadline instead of at a later tick, so a silently dead connection is noticed sooner.
 * **Behavior changes:**
+  * Requests are no longer serialised. Code that started a request without awaiting it and relied on it finishing before the next request was sent must now `await` it.
   * A request in flight when the connection drops or the client closes fails immediately with a `NatsException` instead of at its timeout.
   * A `ws://` or `wss://` open that hangs fails after `timeout` seconds instead of never.
   * `noResponders`, `onLateReply`, `authTokenHandler` and `pingTimeout` change nothing unless set.
