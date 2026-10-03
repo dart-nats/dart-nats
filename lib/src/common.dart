@@ -211,12 +211,125 @@ class NatsException implements Exception {
   /// NatsException
   NatsException(this.message);
 
+  /// The exception for a server `-ERR` line, as its most specific type.
+  ///
+  /// [data] is the text after `-ERR`, kept verbatim as [message]. An error
+  /// this library does not recognise is a plain [NatsException].
+  factory NatsException.fromServerError(String data) {
+    final text = data.toLowerCase();
+    final permission = _permissionsViolation.firstMatch(data);
+    if (permission != null) {
+      return NatsPermissionsViolation(
+        data,
+        operation: permission.group(1)!.toLowerCase() == 'publish'
+            ? NatsOperation.publish
+            : NatsOperation.subscribe,
+        subject: permission.group(2)!,
+        queue: permission.group(3),
+      );
+    }
+    if (text.contains('authorization violation')) {
+      return NatsAuthorizationViolation(data);
+    }
+    if (text.contains('authentication expired') ||
+        text.contains('authentication revoked')) {
+      return NatsAuthenticationExpired(data);
+    }
+    if (text.contains('authentication')) {
+      return NatsAuthenticationException(data);
+    }
+    if (text.contains('stale connection')) {
+      return NatsStaleConnection(data);
+    }
+    if (text.contains('maximum connections exceeded')) {
+      return NatsMaxConnectionsExceeded(data);
+    }
+    if (text.contains('maximum payload violation')) {
+      return NatsMaxPayloadViolation(data);
+    }
+    return NatsException(data);
+  }
+
+  static final _permissionsViolation = RegExp(
+    r'permissions violation for (publish|subscription) to "([^"]*)"'
+    r'(?: using queue "([^"]*)")?',
+    caseSensitive: false,
+  );
+
   @override
   String toString() {
     var result = 'NatsException';
     if (message != null) result = '$result: $message';
     return result;
   }
+}
+
+/// What a client was doing when the server refused it.
+enum NatsOperation {
+  /// Publishing to a subject
+  publish,
+
+  /// Subscribing to a subject
+  subscribe,
+}
+
+/// The server refused a publish or a subscription the connection has no
+/// permission for. The connection stays up; the server drops the message or
+/// the subscription.
+class NatsPermissionsViolation extends NatsException {
+  /// Whether a publish or a subscription was refused
+  final NatsOperation operation;
+
+  /// The subject that was refused
+  final String subject;
+
+  /// The queue group of a refused subscription, when it named one
+  final String? queue;
+
+  /// NatsPermissionsViolation
+  NatsPermissionsViolation(
+    String? message, {
+    required this.operation,
+    required this.subject,
+    this.queue,
+  }) : super(message);
+}
+
+/// The server rejected the connection's credentials or closed it over them.
+/// The client closes and does not retry.
+class NatsAuthenticationException extends NatsException {
+  /// NatsAuthenticationException
+  NatsAuthenticationException(String? message) : super(message);
+}
+
+/// The server answered CONNECT with `Authorization Violation`.
+class NatsAuthorizationViolation extends NatsAuthenticationException {
+  /// NatsAuthorizationViolation
+  NatsAuthorizationViolation(String? message) : super(message);
+}
+
+/// The credentials of an established connection expired or were revoked.
+class NatsAuthenticationExpired extends NatsAuthenticationException {
+  /// NatsAuthenticationExpired
+  NatsAuthenticationExpired(String? message) : super(message);
+}
+
+/// The server closed the connection as stale: it stopped hearing PONGs.
+class NatsStaleConnection extends NatsException {
+  /// NatsStaleConnection
+  NatsStaleConnection(String? message) : super(message);
+}
+
+/// The server is at its connection limit.
+class NatsMaxConnectionsExceeded extends NatsException {
+  /// NatsMaxConnectionsExceeded
+  NatsMaxConnectionsExceeded(String? message) : super(message);
+}
+
+/// A published message was larger than the server's `max_payload`.
+class NatsMaxPayloadViolation extends NatsException {
+  /// NatsMaxPayloadViolation
+  NatsMaxPayloadViolation(String? message) : super(message);
 }
 
 /// nkeys Exception

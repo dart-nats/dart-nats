@@ -7,7 +7,13 @@ import 'dart:io';
 /// TLS the way nats-server does (INFO first, then the handshake), and answers
 /// PING with PONG.
 class FakeNatsServer {
-  FakeNatsServer({this.tls = false, this.sendInfo = true, this.errOnAccept});
+  FakeNatsServer({
+    this.tls = false,
+    this.sendInfo = true,
+    this.errOnAccept,
+    this.answerPing = true,
+    this.onLine,
+  });
 
   /// Advertise `tls_required` in INFO and upgrade every connection.
   final bool tls;
@@ -18,6 +24,14 @@ class FakeNatsServer {
   /// When set, answer every connection with `-ERR '<errOnAccept>'` after
   /// INFO and close it, like nats-server rejecting a client.
   final String? errOnAccept;
+
+  /// When false, only the handshake PING is answered; every later one is
+  /// ignored, like a connection that has silently died. Settable mid-test.
+  bool answerPing;
+
+  /// Called with each protocol line a client sends, and a function that
+  /// writes a raw reply to that client -- enough to script an `-ERR`.
+  final void Function(String line, void Function(String raw) reply)? onLine;
 
   // Self-signed, test-only (CN=localhost, SAN 127.0.0.1), valid for 100 years.
   // Committed on purpose, unlike the generated certs in test/config.
@@ -96,11 +110,16 @@ class FakeNatsServer {
       tlsHandshakes++;
     }
     _sockets.add(conn);
+    var pings = 0;
     conn.listen((data) {
       for (final line in utf8.decode(data).split('\r\n')) {
         if (line.toUpperCase().startsWith('PING')) {
-          conn.add(utf8.encode('PONG\r\n'));
+          pings++;
+          if (answerPing || pings == 1) {
+            conn.add(utf8.encode('PONG\r\n'));
+          }
         }
+        onLine?.call(line, (raw) => conn.add(utf8.encode(raw)));
       }
     }, onError: (dynamic _) {}, onDone: () {});
   }
