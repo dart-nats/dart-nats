@@ -355,6 +355,13 @@ client.connect(
 );
 ```
 
+For a token that expires, set `authTokenHandler` instead. It is called on the first connect and on every reconnect, so a reconnect never presents the token captured at `connect()`. It may be `async`; if it throws, the attempt fails and is retried like any other.
+
+```dart
+client.authTokenHandler = () async => await myAuth.freshAccessToken();
+client.connect(Uri.parse('nats://localhost:4222'));
+```
+
 ### 2. Username & Password Auth
 ```dart
 client.connect(
