@@ -285,5 +285,52 @@ void main() {
       expect(Header().status, isNull);
       expect(Header().description, isNull);
     });
+    test('a reply after the timeout is reported to onLateReply', () async {
+      var server = Client();
+      await server.connect(Uri.parse('ws://localhost:8080'));
+      var service = server.sub('slow');
+      service.stream.listen((m) async {
+        await Future<void>.delayed(Duration(milliseconds: 900));
+        m.respondString('respond');
+      });
+
+      var client = Client();
+      var late = Completer<List<Object>>();
+      client.onLateReply = (subject, lateBy) {
+        late.complete([subject, lateBy]);
+      };
+      await client.connect(Uri.parse('ws://localhost:8080'));
+      await expectLater(
+        client.requestString('slow', 'request',
+            timeout: Duration(milliseconds: 300)),
+        throwsA(isA<TimeoutException>()),
+      );
+
+      var reported = await late.future.timeout(Duration(seconds: 3));
+      expect(reported[0], equals('slow'));
+      expect(reported[1] as Duration, greaterThan(Duration(milliseconds: 300)));
+      expect(reported[1] as Duration, lessThan(Duration(seconds: 2)));
+      await client.close();
+      await server.close();
+    });
+    test('an answered request is never reported as late', () async {
+      var server = Client();
+      await server.connect(Uri.parse('ws://localhost:8080'));
+      var service = server.sub('answered');
+      service.stream.listen((m) {
+        m.respondString('respond');
+      });
+
+      var client = Client();
+      var lateReplies = 0;
+      client.onLateReply = (subject, lateBy) => lateReplies++;
+      await client.connect(Uri.parse('ws://localhost:8080'));
+      await client.requestString('answered', 'request');
+      await Future<void>.delayed(Duration(milliseconds: 200));
+
+      expect(lateReplies, equals(0));
+      await client.close();
+      await server.close();
+    });
   });
 }
