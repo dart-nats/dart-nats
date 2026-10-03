@@ -1,3 +1,9 @@
+## 1.6.1
+
+* Add `NatsConnectionLost`, a `NatsException` thrown by `Client.request()` when the connection cannot carry the request. It names the request's `subject` and says whether it was `sent`: `false` when the client was not connected and the request never left, `true` when it was published and the connection dropped before the reply. Both cases were a plain `NatsException` told apart only by message text; the messages are unchanged.
+* Add `Client.pendingRequestCount`, the number of requests waiting for a reply.
+* Fix a request whose publish write failed outright (for example onto a socket that had just closed) also raising an unhandled zone error, in addition to failing the `request()` call. Such a request now fails with `sent: false`, since nothing left the client.
+
 ## 1.6.0
 
 * `Client.request()` runs requests concurrently. It used to hold one lock from publish until reply or timeout, so a single request nobody answered blocked every other request on the client for its full timeout. Each request now waits on its own reply inbox. The `mutex` dependency is gone.
