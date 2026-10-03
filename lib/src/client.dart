@@ -4,7 +4,6 @@ import 'platform/platform.dart';
 import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
-import 'package:mutex/mutex.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'common.dart';
@@ -55,6 +54,15 @@ class _Pub {
   final String? replyTo;
 
   _Pub(this.subject, this.data, this.replyTo);
+}
+
+/// A request waiting for its reply: the request's own subject, kept so a
+/// failure can name it, and the completer its reply inbox resolves.
+class _PendingRequest {
+  final String subject;
+  final completer = Completer<Message<dynamic>>();
+
+  _PendingRequest(this.subject);
 }
 
 /// NATS client implementation
@@ -1258,12 +1266,35 @@ class Client {
     _inboxSubPrefix = null;
   }
 
-  final _inboxs = <String, Subscription<dynamic>>{};
-  final _mutex = Mutex();
   String? _inboxSubPrefix;
   Subscription<dynamic>? _inboxSub;
+  StreamSubscription<Message<dynamic>>? _inboxListen;
 
-  /// Request-Response pattern: send a request and wait for single response
+  /// Requests in flight, keyed by reply inbox. Each owns its completer and
+  /// nothing is shared between them, so a request nobody answers cannot hold
+  /// up another.
+  final _pendingRequests = <String, _PendingRequest>{};
+
+  void _onInboxMessage(Message<dynamic> msg) {
+    final pending = _pendingRequests[msg.subject];
+    if (pending == null || pending.completer.isCompleted) return;
+    pending.completer.complete(msg);
+  }
+
+  /// Fails every request in flight: their replies can no longer arrive.
+  void _failPendingRequests(Object error) {
+    for (final pending in _pendingRequests.values.toList()) {
+      if (!pending.completer.isCompleted) {
+        pending.completer.completeError(error);
+      }
+    }
+  }
+
+  /// Request-Response pattern: send a request and wait for single response.
+  ///
+  /// Requests are independent: any number can be in flight at once, each on
+  /// its own reply inbox. A request still waiting when the connection drops
+  /// fails with a [NatsException] instead of waiting out its [timeout].
   Future<Message<T>> request<T>(
     String subj,
     Uint8List data, {
@@ -1274,35 +1305,39 @@ class Client {
     if (!connected) {
       throw NatsException('request error: client not connected');
     }
-    late Message<dynamic> resp;
-    await _mutex.acquire();
 
     if (T != dynamic && jsonDecoder == null) {
       jsonDecoder = _getJsonDecoder<T>();
     }
 
-    if (_inboxSubPrefix == null) {
+    if (_inboxSub == null) {
       if (inboxPrefix == '_INBOX') {
         _inboxSubPrefix = inboxPrefix + '.' + Nuid().next();
       } else {
         _inboxSubPrefix = inboxPrefix;
       }
-      _inboxSub =
-          sub<dynamic>(_inboxSubPrefix! + '.>', jsonDecoder: jsonDecoder);
+      final inboxSub = sub<dynamic>(_inboxSubPrefix! + '.>');
+      _inboxSub = inboxSub;
+      _inboxListen = inboxSub.stream.listen(_onInboxMessage);
     }
     final inbox = _inboxSubPrefix! + '.' + Nuid().next();
-    final stream = _inboxSub!.stream;
+    final pending = _PendingRequest(subj);
+    _pendingRequests[inbox] = pending;
 
-    await pub(subj, data, replyTo: inbox, header: header);
-
+    late Message<dynamic> resp;
     try {
-      do {
-        resp = await stream.take(1).single.timeout(timeout);
-      } while (resp.subject != inbox);
+      // Never buffered: a request held for a later connection would wait out
+      // its timeout for a reply to a message that was not sent.
+      final published =
+          await pub(subj, data, replyTo: inbox, header: header, buffer: false);
+      if (!published) {
+        throw NatsException('request error: client not connected');
+      }
+      resp = await pending.completer.future.timeout(timeout);
     } on TimeoutException {
       throw TimeoutException('request time > $timeout');
     } finally {
-      _mutex.release();
+      _pendingRequests.remove(inbox);
     }
 
     final msg = Message<T>(
@@ -1394,6 +1429,7 @@ class Client {
           completer.completeError(exception);
         }
       }
+      _failPendingRequests(exception);
     }
     _status = newStatus;
     _statusController.add(newStatus);
@@ -1572,7 +1608,6 @@ class Client {
   Future<void> close() async {
     _setStatus(Status.closed);
     _backendSubs.forEach((k, v) => _backendSubs[k] = false);
-    _inboxs.clear();
 
     final ws = _wsChannel;
     _wsChannel = null;
@@ -1586,7 +1621,14 @@ class Client {
     _tcpSocket = null;
     await tcp?.close();
 
-    await _inboxSub?.close();
+    await _inboxListen?.cancel();
+    _inboxListen = null;
+    final inboxSub = _inboxSub;
+    if (inboxSub != null) {
+      _subs.remove(inboxSub.sid);
+      _backendSubs.remove(inboxSub.sid);
+      await inboxSub.close();
+    }
     _inboxSub = null;
     _inboxSubPrefix = null;
     _buffer = Uint8List(0);

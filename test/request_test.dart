@@ -141,5 +141,84 @@ void main() {
       expect(r1.string, equals('respond1'));
       expect(r2.string, equals('respond2'));
     });
+    test('an unanswered request does not delay another', () async {
+      var server = Client();
+      await server.connect(Uri.parse('ws://localhost:8080'));
+      var service = server.sub('answered');
+      service.stream.listen((m) {
+        m.respondString('respond');
+      });
+
+      var client = Client();
+      await client.connect(Uri.parse('ws://localhost:8080'));
+      // Nobody subscribes to this subject, so the request runs to its timeout.
+      var unanswered = client.requestString('nobody.listens', 'request',
+          timeout: Duration(seconds: 3));
+      unawaited(unanswered.then<void>((_) {}, onError: (_) {}));
+
+      var watch = Stopwatch()..start();
+      var receive = await client.requestString('answered', 'request',
+          timeout: Duration(seconds: 3));
+      watch.stop();
+
+      expect(receive.string, equals('respond'));
+      expect(watch.elapsed, lessThan(Duration(seconds: 1)));
+      await expectLater(unanswered, throwsA(isA<TimeoutException>()));
+      await client.close();
+      await server.close();
+    });
+    test('overlapping requests each get their own reply', () async {
+      var server = Client();
+      await server.connect(Uri.parse('ws://localhost:8080'));
+      var service = server.sub('echo');
+      service.stream.listen((m) {
+        m.respondString('echo ' + m.string);
+      });
+
+      var client = Client();
+      await client.connect(Uri.parse('ws://localhost:8080'));
+      var replies = await Future.wait([
+        for (var i = 0; i < 50; i++) client.requestString('echo', '$i'),
+      ]);
+
+      await client.close();
+      await server.close();
+      for (var i = 0; i < 50; i++) {
+        expect(replies[i].string, equals('echo $i'));
+      }
+    });
+    test('closing the client fails a request in flight', () async {
+      var client = Client();
+      await client.connect(Uri.parse('ws://localhost:8080'));
+      var watch = Stopwatch()..start();
+      var pending = client.requestString('nobody.listens', 'request',
+          timeout: Duration(seconds: 10));
+      var outcome = expectLater(pending, throwsA(isA<NatsException>()));
+      await Future<void>.delayed(Duration(milliseconds: 200));
+      await client.close();
+      await outcome;
+      watch.stop();
+      expect(watch.elapsed, lessThan(Duration(seconds: 2)));
+    });
+    test('a request can follow a close and reconnect', () async {
+      var server = Client();
+      await server.connect(Uri.parse('ws://localhost:8080'));
+      var service = server.sub('answered');
+      service.stream.listen((m) {
+        m.respondString('respond');
+      });
+
+      var client = Client();
+      await client.connect(Uri.parse('ws://localhost:8080'));
+      expect((await client.requestString('answered', 'a')).string,
+          equals('respond'));
+      await client.close();
+      await client.connect(Uri.parse('ws://localhost:8080'));
+      expect((await client.requestString('answered', 'b')).string,
+          equals('respond'));
+
+      await client.close();
+      await server.close();
+    });
   });
 }
