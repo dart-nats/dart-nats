@@ -1383,11 +1383,28 @@ class Client {
     }
   }
 
+  /// Fails every request in flight because the connection is gone. Each was
+  /// published, so each fails as sent.
+  void _failPendingRequestsLost(String message) {
+    for (final pending in _pendingRequests.values.toList()) {
+      if (!pending.completer.isCompleted) {
+        pending.completer.completeError(
+            NatsConnectionLost(message, subject: pending.subject, sent: true));
+      }
+    }
+  }
+
+  /// How many requests are waiting for their reply. For draining a connection
+  /// before closing it, and for telling one slow reply from a dead connection.
+  int get pendingRequestCount => _pendingRequests.length;
+
   /// Request-Response pattern: send a request and wait for single response.
   ///
   /// Requests are independent: any number can be in flight at once, each on
-  /// its own reply inbox. A request still waiting when the connection drops
-  /// fails with a [NatsException] instead of waiting out its [timeout].
+  /// its own reply inbox. A request made while the client is not connected,
+  /// or still waiting when the connection drops, fails with a
+  /// [NatsConnectionLost] instead of waiting out its [timeout]; its `sent`
+  /// says whether the request left the client.
   Future<Message<T>> request<T>(
     String subj,
     Uint8List data, {
@@ -1396,7 +1413,8 @@ class Client {
     Header? header,
   }) async {
     if (!connected) {
-      throw NatsException('request error: client not connected');
+      throw NatsConnectionLost('request error: client not connected',
+          subject: subj, sent: false);
     }
 
     if (T != dynamic && jsonDecoder == null) {
@@ -1424,7 +1442,8 @@ class Client {
       final published =
           await pub(subj, data, replyTo: inbox, header: header, buffer: false);
       if (!published) {
-        throw NatsException('request error: client not connected');
+        throw NatsConnectionLost('request error: client not connected',
+            subject: subj, sent: false);
       }
       resp = await pending.completer.future.timeout(timeout);
     } on TimeoutException {
@@ -1528,7 +1547,7 @@ class Client {
           completer.completeError(exception);
         }
       }
-      _failPendingRequests(exception);
+      _failPendingRequestsLost(exception.message!);
     }
     _status = newStatus;
     _statusController.add(newStatus);

@@ -293,6 +293,26 @@ class NatsNoRespondersException extends NatsException {
       : super('no responders available for request to "$subject"');
 }
 
+/// A request the connection could not carry: the client was not connected
+/// when it was made, or the connection went away before its reply arrived.
+///
+/// [sent] tells the two apart, which is what decides whether sending the
+/// request again can run it twice.
+class NatsConnectionLost extends NatsException {
+  /// The subject the request was sent to
+  final String subject;
+
+  /// False when the request never left the client, so nothing can have acted
+  /// on it. True when it was published and the connection dropped before the
+  /// reply: a responder may or may not have received it.
+  final bool sent;
+
+  /// NatsConnectionLost
+  NatsConnectionLost(String? message,
+      {required this.subject, required this.sent})
+      : super(message);
+}
+
 /// The server refused a publish or a subscription the connection has no
 /// permission for. The connection stays up; the server drops the message or
 /// the subscription.
