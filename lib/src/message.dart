@@ -79,6 +79,20 @@ class Header {
     }
     return null;
   }
+
+  /// Get the text after the status code of a NATS status message, such as
+  /// `No Messages` in `NATS/1.0 404 No Messages`. Null when there is none.
+  String? get description {
+    final descriptionStr = get('Description');
+    if (descriptionStr != null) {
+      return descriptionStr;
+    }
+    final parts = version.split(' ');
+    if (parts.length >= 3 && int.tryParse(parts[1]) != null) {
+      return parts.sublist(2).join(' ');
+    }
+    return null;
+  }
 }
 
 /// Message class

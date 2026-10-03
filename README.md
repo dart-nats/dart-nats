@@ -317,6 +317,30 @@ final User user = response.data;
 print('User: ${user.name}');
 ```
 
+### 3. Concurrency, Failures & No Responders
+
+Requests are independent: any number can be in flight at once, and one that is never answered does not delay the others. A request fails with:
+
+* `TimeoutException` when no reply arrives within `timeout`;
+* `NatsException` when the connection drops or the client closes while it waits;
+* `NatsPermissionsViolation` as soon as the server refuses the publish;
+* `NatsNoRespondersException` when nobody is subscribed to the subject — only on a connection that asked for it:
+
+```dart
+await client.connect(
+  Uri.parse('nats://localhost:4222'),
+  connectOption: ConnectOption(noResponders: true),
+);
+
+try {
+  await client.requestString('service.missing', 'ping');
+} on NatsNoRespondersException catch (e) {
+  print('nobody serves ${e.subject}');
+}
+```
+
+Without `noResponders`, a request to a subject with no subscriber waits for its timeout. With it, a subscription you open yourself on a reply subject can also receive the server's empty `503` status message (`msg.header?.status == 503`).
+
 ---
 
 ## 🔐 Authentication Modes

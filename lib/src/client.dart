@@ -484,6 +484,11 @@ class Client {
     if (status != Status.disconnected && status != Status.closed) {
       return Future.error('Error: status not disconnected and not closed');
     }
+    final option = connectOption ?? _connectOption;
+    if (option.noResponders == true && option.headers != true) {
+      throw NatsException('noResponders needs headers: the server answers '
+          'a request without responders with a status header');
+    }
 
     _retry = retry;
     this.securityContext = securityContext;
@@ -1281,6 +1286,12 @@ class Client {
   void _onInboxMessage(Message<dynamic> msg) {
     final pending = _pendingRequests[msg.subject];
     if (pending == null || pending.completer.isCompleted) return;
+    if (msg.header?.status == 503 && msg.byte.isEmpty) {
+      // The server's own answer on a no_responders connection.
+      pending.completer
+          .completeError(NatsNoRespondersException(pending.subject));
+      return;
+    }
     pending.completer.complete(msg);
   }
 

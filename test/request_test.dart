@@ -220,5 +220,70 @@ void main() {
       await client.close();
       await server.close();
     });
+    test('noResponders fails a request nobody serves at once', () async {
+      var client = Client();
+      await client.connect(Uri.parse('ws://localhost:8080'),
+          connectOption: ConnectOption(noResponders: true));
+      var watch = Stopwatch()..start();
+      await expectLater(
+        client.requestString('nobody.listens', 'request',
+            timeout: Duration(seconds: 10)),
+        throwsA(isA<NatsNoRespondersException>()
+            .having((e) => e.subject, 'subject', 'nobody.listens')),
+      );
+      watch.stop();
+      expect(watch.elapsed, lessThan(Duration(seconds: 1)));
+      await client.close();
+    });
+    test('noResponders leaves an answered request alone', () async {
+      var server = Client();
+      await server.connect(Uri.parse('ws://localhost:8080'));
+      var service = server.sub('answered');
+      service.stream.listen((m) {
+        m.respondString('respond');
+      });
+
+      var client = Client();
+      await client.connect(Uri.parse('ws://localhost:8080'),
+          connectOption: ConnectOption(noResponders: true));
+      var receive = await client.requestString('answered', 'request');
+
+      await client.close();
+      await server.close();
+      expect(receive.string, equals('respond'));
+    });
+    test('without noResponders a request nobody serves times out', () async {
+      var client = Client();
+      await client.connect(Uri.parse('ws://localhost:8080'));
+      await expectLater(
+        client.requestString('nobody.listens', 'request',
+            timeout: Duration(seconds: 1)),
+        throwsA(isA<TimeoutException>()),
+      );
+      await client.close();
+    });
+    test('noResponders without headers is refused before connecting', () async {
+      var client = Client();
+      await expectLater(
+        client.connect(Uri.parse('ws://localhost:8080'),
+            connectOption: ConnectOption(noResponders: true, headers: false)),
+        throwsA(isA<NatsException>()),
+      );
+      expect(client.status, Status.disconnected);
+    });
+    test('a status header gives its code and description', () {
+      var noMessages = Header.fromBytes(
+          Uint8List.fromList('NATS/1.0 404 No Messages\r\n\r\n'.codeUnits));
+      expect(noMessages.status, equals(404));
+      expect(noMessages.description, equals('No Messages'));
+
+      var noResponders = Header.fromBytes(
+          Uint8List.fromList('NATS/1.0 503\r\n\r\n'.codeUnits));
+      expect(noResponders.status, equals(503));
+      expect(noResponders.description, isNull);
+
+      expect(Header().status, isNull);
+      expect(Header().description, isNull);
+    });
   });
 }
