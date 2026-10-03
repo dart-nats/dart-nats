@@ -1,3 +1,18 @@
+## 1.6.0
+
+* `Client.request()` runs requests concurrently. It used to hold one lock from publish until reply or timeout, so a single request nobody answered blocked every other request on the client for its full timeout. Each request now waits on its own reply inbox. The `mutex` dependency is gone.
+* Add typed server errors. A server `-ERR` reaches `onError` as a subclass of `NatsException` where the client recognises it: `NatsPermissionsViolation` (with `operation`, `subject` and `queue`), `NatsAuthenticationException` and its subtypes `NatsAuthorizationViolation` and `NatsAuthenticationExpired`, `NatsStaleConnection`, `NatsMaxConnectionsExceeded` and `NatsMaxPayloadViolation`. `message` still holds the server's text, and `NatsException.fromServerError()` does the mapping.
+* A request whose publish the server refuses now fails at once with the `NatsPermissionsViolation`, instead of waiting out its timeout for a reply that cannot come.
+* Add `ConnectOption.noResponders` (off by default). On such a connection a request to a subject nobody is subscribed to fails immediately with `NatsNoRespondersException` instead of timing out. `Header` gains `description` beside `status`.
+* Add `Client.onLateReply`, called with the request's subject and the delay when a reply arrives after its request timed out, so "the reply was late" can be told from "the reply never came".
+* Add `Client.authTokenHandler`, called for the token on the first connect and on every reconnect, for tokens that expire. It may be asynchronous; a handler that throws is a failed attempt and is retried.
+* `connect(timeout: ...)` now bounds the WebSocket open on `ws://` and `wss://`. A peer that accepted the connection and never completed the upgrade used to hang the attempt for good.
+* Add `ping(timeout: ...)`, which fails with a `TimeoutException` when no PONG arrives in time, and `connect(pingTimeout: ...)`, which counts an unanswered heartbeat PING at its own deadline instead of at a later tick, so a silently dead connection is noticed sooner.
+* **Behavior changes:**
+  * A request in flight when the connection drops or the client closes fails immediately with a `NatsException` instead of at its timeout.
+  * A `ws://` or `wss://` open that hangs fails after `timeout` seconds instead of never.
+  * `noResponders`, `onLateReply`, `authTokenHandler` and `pingTimeout` change nothing unless set.
+
 ## 1.5.0
 
 * A connect attempt now counts as successful only once the handshake completes (TLS upgrade, CONNECT and the first PONG), not as soon as the TCP or WebSocket connection is open ([#56](https://github.com/dart-nats/dart-nats/issues/56)). Previously, a failure after the socket opened (a TLS certificate that does not verify, `-ERR` such as `maximum connections exceeded`, a server closing the connection or never sending INFO):
