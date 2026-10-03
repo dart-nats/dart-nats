@@ -201,7 +201,7 @@ SUACSSL3UAHUDXKFSNVUZRF5UHPMWZ6BFDTJ7M6USDXIEDNPPQYYYCU3VY
       expect(ack3.sequence, equals(2));
 
       // 4. Publish asserting mismatched sequence -> should fail with error
-      expect(
+      await expectLater(
         () => js.publishString(
           'pub-opts-subject.test',
           'val-3',
@@ -513,7 +513,7 @@ SUACSSL3UAHUDXKFSNVUZRF5UHPMWZ6BFDTJ7M6USDXIEDNPPQYYYCU3VY
       expect(pub2, isTrue);
 
       // Exceed limit -> should throw
-      expect(
+      await expectLater(
         () => client.pubString('buf.test', 'msg3'),
         throwsA(isA<NatsException>()),
       );
@@ -662,7 +662,7 @@ SUACSSL3UAHUDXKFSNVUZRF5UHPMWZ6BFDTJ7M6USDXIEDNPPQYYYCU3VY
       expect(epStats.numErrors, equals(0));
 
       // Check id-without-name argument validation
-      expect(
+      await expectLater(
         () => client.discoverServices(id: 'some-id'),
         throwsArgumentError,
       );
