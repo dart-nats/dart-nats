@@ -917,13 +917,16 @@ class Client {
         if (_connectOption.verbose == true) {
           _ackStream.sink.add(false);
         }
-        final exception = NatsException(data);
+        final exception = NatsException.fromServerError(data);
         if (onError != null) {
           onError!(exception);
         }
-        final authFailed =
-            data.toLowerCase().contains('authorization violation') ||
-                data.toLowerCase().contains('authentication');
+        if (exception is NatsPermissionsViolation &&
+            exception.operation == NatsOperation.publish) {
+          // The server dropped the message, so nobody will ever reply.
+          _failPendingRequests(exception, subject: exception.subject);
+        }
+        final authFailed = exception is NatsAuthenticationException;
         if (_handshakePending && !authFailed) {
           // e.g. "maximum connections exceeded": a failed attempt, which the
           // connect loop retries.
@@ -1281,9 +1284,11 @@ class Client {
     pending.completer.complete(msg);
   }
 
-  /// Fails every request in flight: their replies can no longer arrive.
-  void _failPendingRequests(Object error) {
+  /// Fails the requests in flight whose replies can no longer arrive: all of
+  /// them, or only those sent to [subject].
+  void _failPendingRequests(Object error, {String? subject}) {
     for (final pending in _pendingRequests.values.toList()) {
+      if (subject != null && pending.subject != subject) continue;
       if (!pending.completer.isCompleted) {
         pending.completer.completeError(error);
       }
