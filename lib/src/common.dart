@@ -144,6 +144,12 @@ class ConnectOption {
   /// headers
   bool? headers;
 
+  /// Ask the server to answer a request nobody is subscribed to with a
+  /// `503` status reply, so [Client.request] fails with
+  /// [NatsNoRespondersException] at once instead of at its timeout.
+  /// Needs [headers]. Off unless set.
+  bool? noResponders;
+
   ///protocol
   int? protocol;
 
@@ -161,6 +167,7 @@ class ConnectOption {
       this.lang = 'dart',
       this.version = '0.6.0',
       this.headers = true,
+      this.noResponders,
       this.protocol = 1});
 
   ///constructure from json
@@ -178,6 +185,7 @@ class ConnectOption {
     lang = json['lang'];
     version = json['version'];
     headers = json['headers'];
+    noResponders = json['no_responders'];
     protocol = json['protocol'];
   }
 
@@ -197,6 +205,7 @@ class ConnectOption {
     data['lang'] = lang;
     data['version'] = version;
     data['headers'] = headers;
+    data['no_responders'] = noResponders;
     data['protocol'] = protocol;
 
     return _removeNull(data);
@@ -271,6 +280,17 @@ enum NatsOperation {
 
   /// Subscribing to a subject
   subscribe,
+}
+
+/// Nobody is subscribed to the subject a request was sent to. Raised only
+/// on a connection opened with [ConnectOption.noResponders].
+class NatsNoRespondersException extends NatsException {
+  /// The subject the request was sent to
+  final String subject;
+
+  /// NatsNoRespondersException
+  NatsNoRespondersException(this.subject)
+      : super('no responders available for request to "$subject"');
 }
 
 /// The server refused a publish or a subscription the connection has no

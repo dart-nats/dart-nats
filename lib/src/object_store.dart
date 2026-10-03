@@ -446,7 +446,7 @@ class ObjectStore {
       final decodedMeta = jsonDecode(utf8.decode(base64.decode(dataStr)));
       return ObjectInfo.fromJson(decodedMeta as Map<String, dynamic>);
     } catch (e) {
-      if (e is TimeoutException) {
+      if (e is TimeoutException || e is NatsNoRespondersException) {
         return null;
       }
       rethrow;

@@ -225,7 +225,7 @@ class KeyValue {
       }
       return entry;
     } catch (e) {
-      if (e is TimeoutException) {
+      if (e is TimeoutException || e is NatsNoRespondersException) {
         return null;
       }
       rethrow;
@@ -250,7 +250,7 @@ class KeyValue {
       }
       return _parseEntryRaw(key, map['message'] as Map<String, dynamic>);
     } catch (e) {
-      if (e is TimeoutException) {
+      if (e is TimeoutException || e is NatsNoRespondersException) {
         return null;
       }
       rethrow;
