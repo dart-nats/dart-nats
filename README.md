@@ -76,6 +76,24 @@ client.connect(
 await client.wait4Connected(); // Or client.waitUntilConnected();
 ```
 
+A connection can die without closing — a backgrounded app, a dropped radio — and a write into it does not fail. The heartbeat finds it; `pingTimeout` makes it find it sooner, and `ping(timeout:)` checks on demand:
+
+```dart
+client.connect(
+  Uri.parse('wss://nats.example.com'),
+  pingInterval: Duration(seconds: 30),  // Heartbeat PING every 30s (default 120s)
+  maxPingsOut: 2,                       // Unanswered PINGs tolerated
+  pingTimeout: Duration(seconds: 5),    // Judge an unanswered PING after 5s, not at the next tick
+);
+
+// e.g. when the app returns to the foreground
+try {
+  await client.ping(timeout: Duration(seconds: 3));
+} on TimeoutException {
+  // The connection is gone: close and connect again.
+}
+```
+
 ### 3. Monitoring Connection Status
 You can listen to connection status changes through the `statusStream`. This is ideal for updating Flutter UI overlays when the network drops:
 
