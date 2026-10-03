@@ -1433,15 +1433,24 @@ class Client {
     }
     final inbox = _inboxSubPrefix! + '.' + Nuid().next();
     final pending = _PendingRequest(subj);
+    // A connection can drop while pub() is still writing, failing this
+    // request before it is awaited below. Without a listener that error
+    // would also escape as an unhandled zone error.
+    pending.completer.future.ignore();
     _pendingRequests[inbox] = pending;
 
     late Message<dynamic> resp;
     try {
       // Never buffered: a request held for a later connection would wait out
       // its timeout for a reply to a message that was not sent.
-      final published =
-          await pub(subj, data, replyTo: inbox, header: header, buffer: false);
-      if (!published) {
+      final publishing =
+          pub(subj, data, replyTo: inbox, header: header, buffer: false);
+      // pub() runs synchronously through the write. If the connection is
+      // gone already, the write itself failed and nothing left the client,
+      // though the drop has failed this request as sent.
+      final writeFailed = !connected;
+      final published = await publishing;
+      if (!published || writeFailed) {
         throw NatsConnectionLost('request error: client not connected',
             subject: subj, sent: false);
       }
