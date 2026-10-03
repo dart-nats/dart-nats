@@ -1,3 +1,10 @@
+## 1.4.3
+
+* Fix a `tls://` client never reconnecting after the server closed an established connection, for example on a nats-server restart ([#55](https://github.com/dart-nats/dart-nats/issues/55)). The client kept a reference to the dead secure socket, and the next attempt's TCP listener only forwards data while there is none, so the new server's INFO was dropped and the TLS upgrade never started. The client looped through TCP connects that the server closed with `TLS Handshake Failure`. Every connect attempt now starts with no references to the previous connection. This also affects `nats://` connections to a server that requires TLS.
+* Fix a rejected `connect()` call changing the live connection. `connect()` applied its arguments (server pool, retry settings, a new connect completer) before checking whether the client was already in use, so a call that then threw `client in use` still swapped in its servers and retry settings, and its orphaned completer later failed as an unhandled zone error.
+* Fix a TLS error on an established connection escaping as an unhandled zone error. The secure socket's error handler rethrew the `TlsException` after reporting it through `onError`, and an exception thrown from a stream handler has no caller to reach. The library also no longer prints socket errors to stdout; they are reported through `onError` only.
+* Many thanks to contributor [@amalic](https://github.com/amalic) for the detailed report.
+
 ## 1.4.2
 
 * Fix a failed socket write escaping as an unhandled zone error when the peer aborts the connection. `Socket` is an `IOSink`, so `add()` reports a write failure asynchronously on `done` instead of throwing -- the `try`/`catch` around the write never saw it and nothing was listening for it, so a keepalive ping landing on an already-aborted socket had no handler anywhere. Write failures now take the same path a read error does, `onError` followed by a `disconnected` status, on the `nats:`, `tls:`, and secure transports. On `tls://` such a failure previously reached the application as nothing at all beyond a bare status change.

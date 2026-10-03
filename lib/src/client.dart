@@ -444,6 +444,17 @@ class Client {
     bool randomizeServers = true,
     int maxReconnectBuffer = 1000,
   }) async {
+    // Reject before touching any state: a call refused here must not leave the
+    // live connection with this call's server pool, retry settings or an
+    // orphaned connect completer.
+    if (_clientStatus == _ClientStatus.used) {
+      throw Exception(
+          NatsException('client in use. must close before call connect'));
+    }
+    if (status != Status.disconnected && status != Status.closed) {
+      return Future.error('Error: status not disconnected and not closed');
+    }
+
     _retry = retry;
     this.securityContext = securityContext;
     this.pingInterval = pingInterval;
@@ -462,14 +473,6 @@ class Client {
       _serverPool.shuffle();
     }
     _currentServerIndex = 0;
-
-    if (_clientStatus == _ClientStatus.used) {
-      throw Exception(
-          NatsException('client in use. must close before call connect'));
-    }
-    if (status != Status.disconnected && status != Status.closed) {
-      return Future.error('Error: status not disconnected and not closed');
-    }
 
     _clientStatus = _ClientStatus.used;
     if (connectOption != null) {
@@ -553,6 +556,10 @@ class Client {
   }
 
   Future<bool> _connectUri(Uri uri, {int timeout = 5}) async {
+    // Start every attempt with no references to the previous transport. A
+    // stale _secureSocket left behind by a server-side close makes the new
+    // TCP listener drop INFO, so the TLS upgrade never starts (#55).
+    await _cleanUpSocketsSoft();
     _connectOptionSent = false;
     try {
       if (uri.scheme == '') {
@@ -784,16 +791,17 @@ class Client {
                 _channelStream.add([connId, event]);
               }, onError: (dynamic error) {
                 if (secureSocket != _secureSocket) return;
-                print('Socket error: $error');
                 _setStatus(Status.disconnected);
                 if (onError != null) {
                   onError!(error);
                 }
 
+                // No throw here: an exception from a stream error handler has
+                // no caller to reach and always escapes as an unhandled zone
+                // error. onError above already reported it.
                 if (error is TlsException) {
                   _retry = false;
                   close();
-                  throw Exception(NatsException(error.message));
                 }
               }, onDone: () {
                 if (secureSocket != _secureSocket) return;
