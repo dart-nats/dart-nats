@@ -644,9 +644,23 @@ class Client {
       switch (uri.scheme) {
         case 'wss':
         case 'ws':
+          final channel = WebSocketChannel.connect(uri);
+          _wsChannel = channel;
           try {
-            _wsChannel = WebSocketChannel.connect(uri);
-            await _wsChannel!.ready;
+            // Bounded like the TCP dial of the other schemes: an open that
+            // never completes would otherwise hang this attempt for good.
+            await channel.ready.timeout(Duration(seconds: timeout));
+          } on TimeoutException {
+            _wsChannel = null;
+            // A late open must not leave a second socket behind.
+            unawaited(Future<void>(() async {
+              try {
+                await channel.sink.close();
+              } catch (_) {}
+            }));
+            throw NatsException(
+                'no websocket open with ${uri.host}:${uri.port} '
+                'within ${timeout}s');
           } catch (e) {
             _wsChannel = null;
             rethrow;
