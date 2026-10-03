@@ -482,6 +482,11 @@ class ObjectStore {
 
     final chunksData = <Uint8List>[];
     final completer = Completer<Uint8List?>();
+    // The chunks can arrive, and fail verification, while this method is
+    // still awaiting createConsumer below -- before anything listens to the
+    // completer. Without a listener that error is unhandled; this one keeps
+    // it for the `return completer.future` at the end, which still throws.
+    unawaited(completer.future.then<void>((_) {}, onError: (_) {}));
     StreamSubscription? streamSub;
     Timer? timeoutTimer;
 
