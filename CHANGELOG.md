@@ -1,3 +1,7 @@
+## 1.7.0
+
+* Add `ignoreDiscoveredServers` to `Client.connect()` (off by default). When set, the `connect_urls` a server advertises in INFO are not added to the server pool, so reconnects only go to the servers passed to `connect()`. Use it when the advertised addresses aren't reachable from the client, such as behind a proxy or a WebSocket-to-TCP relay, where a reconnect to one of them can only fail. Same idea as nats.go's `IgnoreDiscoveredServers`.
+
 ## 1.6.1
 
 * Add `NatsConnectionLost`, a `NatsException` thrown by `Client.request()` when the connection cannot carry the request. It names the request's `subject` and says whether it was `sent`: `false` when the client was not connected and the request never left, `true` when it was published and the connection dropped before the reply. Both cases were a plain `NatsException` told apart only by message text; the messages are unchanged.

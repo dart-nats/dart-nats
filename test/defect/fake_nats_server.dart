@@ -13,6 +13,7 @@ class FakeNatsServer {
     this.errOnAccept,
     this.answerPing = true,
     this.onLine,
+    this.connectUrls,
   });
 
   /// Advertise `tls_required` in INFO and upgrade every connection.
@@ -32,6 +33,10 @@ class FakeNatsServer {
   /// Called with each protocol line a client sends, and a function that
   /// writes a raw reply to that client -- enough to script an `-ERR`.
   final void Function(String line, void Function(String raw) reply)? onLine;
+
+  /// When set, advertised in INFO as `connect_urls`, like a cluster member
+  /// telling the client about its peers.
+  final List<String>? connectUrls;
 
   // Self-signed, test-only (CN=localhost, SAN 127.0.0.1), valid for 100 years.
   // Committed on purpose, unlike the generated certs in test/config.
@@ -90,8 +95,10 @@ class FakeNatsServer {
       socket.listen((_) {}, onError: (dynamic _) {}, onDone: () {});
       return;
     }
+    final urls =
+        connectUrls == null ? '' : ',"connect_urls":${jsonEncode(connectUrls)}';
     socket.add(utf8.encode('INFO {"server_id":"fake","version":"2.10.0",'
-        '"proto":1,"max_payload":1048576,"tls_required":$tls}\r\n'));
+        '"proto":1,"max_payload":1048576,"tls_required":$tls$urls}\r\n'));
     if (errOnAccept != null) {
       socket.add(utf8.encode("-ERR '$errOnAccept'\r\n"));
       await socket.flush();
