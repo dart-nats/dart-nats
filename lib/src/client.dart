@@ -209,6 +209,12 @@ class Client {
 
   /// Maximum number of messages to buffer during reconnection
   int maxReconnectBuffer = 1000;
+
+  /// When true, the `connect_urls` a server advertises in INFO are not added
+  /// to the server pool, so the client only ever reconnects to the servers
+  /// passed to [connect]. Useful when those addresses aren't reachable from
+  /// the client, e.g. behind a proxy or a WebSocket-to-TCP relay.
+  bool ignoreDiscoveredServers = false;
   int _reconnectTimeout = 5;
   int _reconnectInterval = 10;
   int _reconnectCount = 3;
@@ -512,6 +518,7 @@ class Client {
     Duration? pingTimeout,
     bool randomizeServers = true,
     int maxReconnectBuffer = 1000,
+    bool ignoreDiscoveredServers = false,
   }) async {
     // Reject before touching any state: a call refused here must not leave the
     // live connection with this call's server pool, retry settings or an
@@ -535,6 +542,7 @@ class Client {
     this.maxPingsOut = maxPingsOut;
     this.pingTimeout = pingTimeout;
     this.maxReconnectBuffer = maxReconnectBuffer;
+    this.ignoreDiscoveredServers = ignoreDiscoveredServers;
     _reconnectTimeout = timeout;
     _reconnectInterval = retryInterval;
     _reconnectCount = retryCount;
@@ -866,7 +874,7 @@ class Client {
         try {
           _info = Info.fromJson(jsonDecode(data) as Map<String, dynamic>);
 
-          if (_info.connectUrls != null) {
+          if (_info.connectUrls != null && !ignoreDiscoveredServers) {
             for (var urlStr in _info.connectUrls!) {
               var formatted = urlStr;
               if (!formatted.contains('://')) {
