@@ -1,3 +1,7 @@
+## 1.7.1
+
+* The client now reports its real version in CONNECT. `ConnectOption.version` defaulted to `0.6.0` regardless of the release, so servers listed every dart_nats client as `dart 0.6.0` (in `/connz` and `nats server report connections`). It now defaults to the package's own version, which the release job writes into `lib/src/version.dart` from `pubspec.yaml` before publishing.
+
 ## 1.7.0
 
 * Add `ignoreDiscoveredServers` to `Client.connect()` (off by default). When set, the `connect_urls` a server advertises in INFO are not added to the server pool, so reconnects only go to the servers passed to `connect()`. Use it when the advertised addresses aren't reachable from the client, such as behind a proxy or a WebSocket-to-TCP relay, where a reconnect to one of them can only fail. Same idea as nats.go's `IgnoreDiscoveredServers`.
