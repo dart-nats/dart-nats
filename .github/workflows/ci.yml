@@ -32,7 +32,7 @@ jobs:
         # can't resolve flutter_lints without a `flutter pub get`, which
         # makes `dart format` fall back to a language version too old for
         # its super-parameter syntax and fail to parse it.
-        run: dart format --output=none --set-exit-if-changed lib test example/*.dart
+        run: dart format --output=none --set-exit-if-changed lib test tool example/*.dart
       - name: Generate TLS test certificates
         run: |
           openssl req -newkey rsa:2048 -new -nodes -x509 -days 3650 \
@@ -124,6 +124,12 @@ jobs:
             exit 1
           fi
           echo "PUBSPEC_VERSION=$PUBSPEC_VERSION" >> "$GITHUB_ENV"
+      - name: Write lib/src/version.dart from pubspec.yaml
+        # The version the client reports in CONNECT. Written here, from the
+        # version just checked against the tag, so a release never ships the
+        # previous one even if the checked-in copy wasn't updated. pub warns
+        # that the file is modified in git; --force publishes past warnings.
+        run: dart run tool/write_version.dart
       - name: Publish to pub.dev
         run: dart pub publish --force
       - name: Extract changelog section

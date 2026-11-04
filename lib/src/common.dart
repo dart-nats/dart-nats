@@ -1,3 +1,5 @@
+import 'version.dart';
+
 Map<String, dynamic> _removeNull(Map<String, dynamic> data) {
   var data2 = <String, dynamic>{};
 
@@ -135,10 +137,11 @@ class ConnectOption {
   /// client connection name / app name
   String? name;
 
-  /// lang??
+  /// The client library's language, shown by servers next to [version].
   String? lang;
 
-  /// sever version
+  /// The client library's version. Defaults to this package's own version
+  /// (`packageVersion`), so servers show which dart_nats a client runs.
   String? version;
 
   /// headers
@@ -165,7 +168,7 @@ class ConnectOption {
       this.tlsRequired,
       this.name,
       this.lang = 'dart',
-      this.version = '0.6.0',
+      this.version = packageVersion,
       this.headers = true,
       this.noResponders,
       this.protocol = 1});

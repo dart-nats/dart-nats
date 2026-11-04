@@ -90,6 +90,15 @@ dart test -j 1
 
 ---
 
+## 📦 Releasing
+
+1. Set the new `version:` in `pubspec.yaml` and add a matching `## <version>` section to `CHANGELOG.md`.
+2. Merge, then push a `v<version>` tag. CI checks that the tag, `pubspec.yaml` and the changelog agree, publishes to pub.dev, and creates the GitHub release.
+
+The version the client reports to servers in CONNECT comes from `lib/src/version.dart`. The publish job writes it from `pubspec.yaml` just before publishing, so you don't have to. To update the checked-in copy too, run `dart run tool/write_version.dart`.
+
+---
+
 ## 🔍 Troubleshooting
 
 ### 1. `NatsException: Connection refused` or `SocketException`
